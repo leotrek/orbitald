@@ -1,0 +1,59 @@
+{
+  "functions": [
+    {
+      "name": "payload-copy",
+      "image": "orbitald/example-payload-copy:2026-09-03",
+      "timeout": "30s",
+      "memory_limit": "32Mi"
+    },
+    {
+      "name": "artifact-writer",
+      "image": "orbitald/example-artifact-writer:2026-09-03",
+      "timeout": "30s",
+      "memory_limit": "32Mi"
+    },
+    {
+      "name": "conditional-fail",
+      "image": "orbitald/example-conditional-fail:2026-09-03",
+      "timeout": "30s",
+      "memory_limit": "32Mi"
+    }
+  ],
+  "windows": [
+    {
+      "id": "pass-2026-09-04T12:00:00Z-payload-copy",
+      "function": "payload-copy",
+      "area": "zone-a",
+      "start_at": "2026-09-04T12:00:00Z",
+      "end_at": "2026-09-04T12:01:00Z",
+      "payload": {
+        "camera": "nadir",
+        "mode": "survey"
+      }
+    },
+    {
+      "id": "pass-2026-09-04T12:02:00Z-artifact-writer",
+      "function": "artifact-writer",
+      "area": "zone-b",
+      "start_at": "2026-09-04T12:02:00Z",
+      "end_at": "2026-09-04T12:03:00Z",
+      "payload": {
+        "capture_count": 3,
+        "mission": "demo"
+      }
+    },
+    {
+      "id": "pass-2026-09-04T12:04:00Z-conditional-fail",
+      "function": "conditional-fail",
+      "area": "zone-c",
+      "start_at": "2026-09-04T12:04:00Z",
+      "end_at": "2026-09-04T12:05:00Z",
+      "payload": {
+        "should_fail": true,
+        "reason": "demo-error-path"
+      }
+    }
+  ],
+  "replace_windows": true,
+  "ack_result_ids": []
+}
