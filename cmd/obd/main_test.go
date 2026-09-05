@@ -21,11 +21,11 @@ func TestSortedFunctionsReturnsAllFunctionsByName(t *testing.T) {
 	}
 }
 
-func TestBuildInstanceInfosReturnsAllSnapshotStates(t *testing.T) {
+func TestBuildRunInfosReturnsAllSnapshotStates(t *testing.T) {
 	start := mustTime(t, "2026-09-05T12:00:00Z")
 	finish := mustTime(t, "2026-09-05T12:01:00Z")
 
-	instances := buildInstanceInfos(orbitald.StateSnapshot{
+	instances := buildRunInfos(orbitald.StateSnapshot{
 		Functions: []orbitald.FunctionSpec{
 			{Name: "capture", Image: "ghcr.io/acme/capture:latest"},
 		},
@@ -80,11 +80,11 @@ func TestBuildInstanceInfosReturnsAllSnapshotStates(t *testing.T) {
 	assertStatus(t, statuses, "window-expired", "expired")
 }
 
-func TestBuildInstanceInfosIncludesOrphanResults(t *testing.T) {
+func TestBuildRunInfosIncludesOrphanResults(t *testing.T) {
 	start := mustTime(t, "2026-09-05T12:00:00Z")
 	finish := mustTime(t, "2026-09-05T12:01:00Z")
 
-	instances := buildInstanceInfos(orbitald.StateSnapshot{
+	instances := buildRunInfos(orbitald.StateSnapshot{
 		Results: []orbitald.ResultRecord{
 			{ID: "result-orphan", RunID: "run-orphan", Function: "capture", WindowID: "missing-window", Status: orbitald.WindowFailed, ExitCode: 2, StartedAt: start, FinishedAt: finish, Error: "lost window"},
 		},

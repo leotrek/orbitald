@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -27,6 +28,7 @@ const defaultEndpoint = "http://127.0.0.1:8080"
 type cli struct {
 	endpoint       string
 	containerdSock string
+	stateDir       string
 	timeout        time.Duration
 	jsonOutput     bool
 	out            io.Writer
@@ -59,6 +61,7 @@ func run(args []string, out, errOut io.Writer) int {
 	cfg := cli{
 		endpoint:       defaultEndpoint,
 		containerdSock: "/run/containerd/containerd.sock",
+		stateDir:       orbitald.DefaultStateDir,
 		timeout:        5 * time.Second,
 		out:            out,
 		err:            errOut,
@@ -69,6 +72,7 @@ func run(args []string, out, errOut io.Writer) int {
 	flags.Usage = func() { printUsage(errOut) }
 	flags.StringVar(&cfg.endpoint, "addr", cfg.endpoint, "orbitald HTTP endpoint")
 	flags.StringVar(&cfg.containerdSock, "containerd-sock", cfg.containerdSock, "containerd socket path")
+	flags.StringVar(&cfg.stateDir, "state-dir", cfg.stateDir, "orbitald state directory for local run logs")
 	flags.DurationVar(&cfg.timeout, "timeout", cfg.timeout, "command timeout")
 	flags.BoolVar(&cfg.jsonOutput, "json", false, "print JSON where supported")
 
@@ -99,8 +103,14 @@ func run(args []string, out, errOut io.Writer) int {
 		err = cfg.system(commandArgs)
 	case "fn", "function":
 		err = cfg.fn(commandArgs)
-	case "instance", "instances", "run", "runs":
-		err = cfg.instance(commandArgs)
+	case "list", "ls":
+		err = cfg.list(commandArgs)
+	case "run", "runs":
+		err = cfg.runCmd(commandArgs)
+	case "log", "logs":
+		err = cfg.runLogs(commandArgs)
+	case "instance", "instances":
+		err = cfg.listRuns(commandArgs)
 	case "container", "containers":
 		err = cfg.container(commandArgs)
 	default:
@@ -119,12 +129,16 @@ func printUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   obd [global flags] version
   obd [global flags] status
+  obd [global flags] list [FUNCTION]
+  obd [global flags] list functions
+  obd [global flags] run list [FUNCTION]
+  obd [global flags] run info RUN_ID|WINDOW_ID|RESULT_ID
+  obd [global flags] run logs RUN_ID|WINDOW_ID|RESULT_ID
   obd [global flags] fn list
   obd [global flags] fn info NAME
   obd [global flags] fn status [NAME]
   obd [global flags] fn start NAME [flags]
   obd [global flags] fn stop NAME|WINDOW_ID|RUN_ID
-  obd [global flags] instance list [FUNCTION]
   obd [global flags] container info ID
   obd [global flags] container status [ID]
   obd [global flags] container start NAME [flags]
@@ -133,6 +147,7 @@ func printUsage(w io.Writer) {
 Global flags:
   --addr string              orbitald HTTP endpoint (default http://127.0.0.1:8080)
   --containerd-sock string   containerd socket path (default /run/containerd/containerd.sock)
+  --state-dir string         orbitald state directory for local run logs (default /var/lib/orbitald)
   --timeout duration         command timeout (default 5s)
   --json                     print JSON where supported
 
@@ -141,7 +156,9 @@ Examples:
   obd status
   obd fn list
   obd fn status capture
-  obd instances
+  obd list
+  obd list capture
+  obd run logs capture-20260905t120000-000001
   obd fn start capture --payload '{"camera":"nadir"}'
   obd fn start capture --image ghcr.io/acme/capture:latest
   obd fn stop capture
@@ -155,12 +172,19 @@ func (c *cli) help(args []string) error {
 	}
 
 	switch args[0] {
+	case "list", "ls":
+		fmt.Fprint(c.out, `Usage:
+  obd list [FUNCTION]
+  obd list runs [FUNCTION]
+  obd list functions
+
+The default list command shows runs from the orbitald snapshot. Completed successful runs are shown as stopped, and failed runs are shown as error.
+`)
 	case "fn", "function":
 		fmt.Fprint(c.out, `Usage:
   obd fn list
   obd fn info NAME
   obd fn status [NAME]
-  obd fn instances [NAME]
   obd fn start NAME [flags]
   obd fn stop NAME|WINDOW_ID|RUN_ID
 
@@ -175,12 +199,14 @@ Function start flags:
   --arg string         container command arg when --image is provided; repeatable
   --env KEY=VALUE      environment variable when --image is provided; repeatable
 `)
-	case "instance", "instances", "run", "runs":
+	case "run", "runs", "instance", "instances":
 		fmt.Fprint(c.out, `Usage:
-  obd instance list [FUNCTION]
-  obd instances [FUNCTION]
+  obd run list [FUNCTION]
+  obd run info RUN_ID|WINDOW_ID|RESULT_ID
+  obd run logs RUN_ID|WINDOW_ID|RESULT_ID [--tail N]
+  obd run stop RUN_ID|WINDOW_ID|FUNCTION
 
-Instances are read from the orbitald snapshot. Completed successful runs are shown as stopped, and failed runs are shown as error.
+Runs are read from the orbitald snapshot. Completed successful runs are shown as stopped, and failed runs are shown as error.
 `)
 	case "container", "containers":
 		fmt.Fprint(c.out, `Usage:
@@ -338,7 +364,7 @@ func (c *cli) fn(args []string) error {
 	case "status":
 		return c.fnStatus(args[1:])
 	case "instances", "runs":
-		return c.instanceList(args[1:])
+		return c.listRuns(args[1:])
 	case "start":
 		return c.fnStart(args[1:])
 	case "stop":
@@ -478,24 +504,28 @@ func (c *cli) fnStatus(args []string) error {
 	return nil
 }
 
-func (c *cli) instance(args []string) error {
+func (c *cli) list(args []string) error {
 	if len(args) == 0 {
-		return c.instanceList(nil)
+		return c.listRuns(nil)
 	}
 
 	switch args[0] {
+	case "fn", "function", "functions":
+		return c.fnList(args[1:])
+	case "run", "runs", "instance", "instances":
+		return c.listRuns(args[1:])
 	case "list", "ls", "status":
-		return c.instanceList(args[1:])
+		return c.listRuns(args[1:])
 	case "help":
-		return c.help([]string{"instance"})
+		return c.help([]string{"list"})
 	default:
-		return c.instanceList(args)
+		return c.listRuns(args)
 	}
 }
 
-func (c *cli) instanceList(args []string) error {
+func (c *cli) listRuns(args []string) error {
 	if len(args) > 1 {
-		return fmt.Errorf("usage: obd instance list [FUNCTION]")
+		return fmt.Errorf("usage: obd list [FUNCTION]")
 	}
 	var function string
 	if len(args) == 1 {
@@ -507,7 +537,7 @@ func (c *cli) instanceList(args []string) error {
 		return err
 	}
 
-	instances := buildInstanceInfos(state, function)
+	instances := buildRunInfos(state, function)
 	if len(instances) == 0 && function != "" {
 		if _, ok := findFunction(state, function); !ok {
 			return fmt.Errorf("function %q not found", function)
@@ -518,7 +548,7 @@ func (c *cli) instanceList(args []string) error {
 		return writePrettyJSON(c.out, instances)
 	}
 
-	fmt.Fprintf(c.out, "%-32s %-20s %-9s %-28s %-28s %-5s %-20s %s\n", "INSTANCE", "FUNCTION", "STATUS", "WINDOW", "RESULT", "EXIT", "STARTED", "ERROR")
+	fmt.Fprintf(c.out, "%-32s %-20s %-9s %-28s %-28s %-5s %-20s %s\n", "RUN", "FUNCTION", "STATUS", "WINDOW", "RESULT", "EXIT", "STARTED", "ERROR")
 	for _, instance := range instances {
 		exitCode := "-"
 		if instance.ExitCode != nil {
@@ -919,7 +949,7 @@ type functionSummary struct {
 	Results int    `json:"results"`
 }
 
-type instanceInfo struct {
+type runInfo struct {
 	ID                string     `json:"id"`
 	Function          string     `json:"function"`
 	Status            string     `json:"status"`
@@ -942,7 +972,7 @@ type instanceInfo struct {
 	Error             string     `json:"error,omitempty"`
 }
 
-func buildInstanceInfos(state orbitald.StateSnapshot, onlyFunction string) []instanceInfo {
+func buildRunInfos(state orbitald.StateSnapshot, onlyFunction string) []runInfo {
 	resultsByWindow := map[string]orbitald.ResultRecord{}
 	resultsByRun := map[string]orbitald.ResultRecord{}
 	usedResults := map[string]bool{}
@@ -962,7 +992,7 @@ func buildInstanceInfos(state orbitald.StateSnapshot, onlyFunction string) []ins
 		}
 	}
 
-	instances := make([]instanceInfo, 0, len(state.Windows)+len(state.Results))
+	instances := make([]runInfo, 0, len(state.Windows)+len(state.Results))
 	for _, window := range state.Windows {
 		if onlyFunction != "" && window.Function != onlyFunction {
 			continue
@@ -974,7 +1004,7 @@ func buildInstanceInfos(state orbitald.StateSnapshot, onlyFunction string) []ins
 		if hasResult {
 			usedResults[result.ID] = true
 		}
-		instances = append(instances, instanceFromWindow(window, result, hasResult))
+		instances = append(instances, runFromWindow(window, result, hasResult))
 	}
 
 	for _, result := range state.Results {
@@ -984,12 +1014,12 @@ func buildInstanceInfos(state orbitald.StateSnapshot, onlyFunction string) []ins
 		if usedResults[result.ID] {
 			continue
 		}
-		instances = append(instances, instanceFromResult(result))
+		instances = append(instances, runFromResult(result))
 	}
 
 	sort.Slice(instances, func(i, j int) bool {
-		left := effectiveInstanceTime(instances[i])
-		right := effectiveInstanceTime(instances[j])
+		left := effectiveRunTime(instances[i])
+		right := effectiveRunTime(instances[j])
 		if left.Equal(right) {
 			return instances[i].ID < instances[j].ID
 		}
@@ -998,11 +1028,11 @@ func buildInstanceInfos(state orbitald.StateSnapshot, onlyFunction string) []ins
 	return instances
 }
 
-func instanceFromWindow(window orbitald.WindowRecord, result orbitald.ResultRecord, hasResult bool) instanceInfo {
-	info := instanceInfo{
+func runFromWindow(window orbitald.WindowRecord, result orbitald.ResultRecord, hasResult bool) runInfo {
+	info := runInfo{
 		ID:           firstNonEmpty(window.RunID, window.ID),
 		Function:     window.Function,
-		Status:       normalizeInstanceStatus(window.Status, ""),
+		Status:       normalizeRunStatus(window.Status, ""),
 		WindowID:     window.ID,
 		WindowStatus: window.Status,
 		RunID:        window.RunID,
@@ -1014,24 +1044,24 @@ func instanceFromWindow(window orbitald.WindowRecord, result orbitald.ResultReco
 		Error:        window.Error,
 	}
 	if hasResult {
-		mergeResultIntoInstance(&info, result)
+		mergeResultIntoRun(&info, result)
 	}
 	return info
 }
 
-func instanceFromResult(result orbitald.ResultRecord) instanceInfo {
-	info := instanceInfo{
+func runFromResult(result orbitald.ResultRecord) runInfo {
+	info := runInfo{
 		ID:       firstNonEmpty(result.RunID, result.ID),
 		Function: result.Function,
-		Status:   normalizeInstanceStatus("", result.Status),
+		Status:   normalizeRunStatus("", result.Status),
 		WindowID: result.WindowID,
 		RunID:    result.RunID,
 	}
-	mergeResultIntoInstance(&info, result)
+	mergeResultIntoRun(&info, result)
 	return info
 }
 
-func mergeResultIntoInstance(info *instanceInfo, result orbitald.ResultRecord) {
+func mergeResultIntoRun(info *runInfo, result orbitald.ResultRecord) {
 	exitCode := result.ExitCode
 	info.ResultID = result.ID
 	info.ResultStatus = result.Status
@@ -1045,10 +1075,10 @@ func mergeResultIntoInstance(info *instanceInfo, result orbitald.ResultRecord) {
 	if result.Error != "" {
 		info.Error = result.Error
 	}
-	info.Status = normalizeInstanceStatus(info.WindowStatus, result.Status)
+	info.Status = normalizeRunStatus(info.WindowStatus, result.Status)
 }
 
-func normalizeInstanceStatus(windowStatus, resultStatus string) string {
+func normalizeRunStatus(windowStatus, resultStatus string) string {
 	if resultStatus == orbitald.WindowFailed || windowStatus == orbitald.WindowFailed {
 		return "error"
 	}
@@ -1185,7 +1215,7 @@ func printStateCounts(w io.Writer, state orbitald.StateSnapshot) {
 	fmt.Fprintf(w, "  results: %d pending_upload=%d\n", len(state.Results), pendingUpload)
 }
 
-func effectiveInstanceTime(info instanceInfo) time.Time {
+func effectiveRunTime(info runInfo) time.Time {
 	for _, candidate := range []*time.Time{info.StartedAt, info.TriggeredAt, info.StartAt, info.FinishedAt, info.EndAt} {
 		if candidate != nil && !candidate.IsZero() {
 			return *candidate

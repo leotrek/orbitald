@@ -91,18 +91,18 @@ Function commands:
 obd fn list
 obd fn status
 obd fn info capture
-obd fn instances capture
 obd fn start capture --payload '{"camera":"nadir"}'
 obd fn start capture --image ghcr.io/acme/capture:latest
 obd fn stop capture
 ```
 
-Instance commands:
+List commands:
 
 ```bash
-obd instances
-obd instances capture
-obd instance list capture
+obd list
+obd list capture
+obd list runs capture
+obd list functions
 ```
 
 Container runtime commands:

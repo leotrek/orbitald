@@ -144,8 +144,8 @@ obd status
 obd fn list
 obd fn status
 obd fn info capture
-obd instances
-obd instances capture
+obd list
+obd list capture
 obd fn start capture --payload '{"camera":"nadir"}'
 obd fn stop capture
 obd container status
@@ -153,7 +153,7 @@ obd container info <run-id>
 obd container stop <run-id>
 ```
 
-`fn` and `instances` commands use the `orbitald` HTTP API snapshot. `container` status/info/stop commands inspect live containerd containers in the `orbitald` namespace.
+`fn` and `list` commands use the `orbitald` HTTP API snapshot. `container` status/info/stop commands inspect live containerd containers in the `orbitald` namespace.
 
 For a node deployment, run `orbitald` under an existing non-root user with:
 
