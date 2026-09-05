@@ -628,7 +628,9 @@ func (c *cli) runInfo(args []string) error {
 	printOptionalTime(c.out, "  finished", info.FinishedAt)
 	printOptional(c.out, "  payload", info.PayloadPath)
 	printOptional(c.out, "  output", info.OutputDir)
-	printOptional(c.out, "  log", logPathForRun(c.stateDir, info))
+	if !runFailedBeforeLog(info) {
+		printOptional(c.out, "  log", logPathForRun(c.stateDir, info))
+	}
 	printOptionalTime(c.out, "  uploaded", info.UploadConfirmedAt)
 	printOptional(c.out, "  error", info.Error)
 	return nil
@@ -648,6 +650,9 @@ func (c *cli) runLogs(args []string) error {
 	info, ok := findRunInfo(state, target)
 	if !ok {
 		return fmt.Errorf("run/window/result %q not found", target)
+	}
+	if runFailedBeforeLog(info) {
+		return fmt.Errorf("run failed before log file was created: %s", info.Error)
 	}
 
 	logPath := logPathForRun(c.stateDir, info)
@@ -1207,6 +1212,10 @@ func logPathForRun(stateDir string, info runInfo) string {
 		return filepath.Join(stateDir, "runs", info.RunID, "run.log")
 	}
 	return ""
+}
+
+func runFailedBeforeLog(info runInfo) bool {
+	return info.LogPath == "" && info.ResultID != "" && info.Error != ""
 }
 
 func parseRunLogsArgs(args []string) (string, int, error) {

@@ -229,9 +229,35 @@ replace_unit_setting() {
 	mv "$tmp_next" "$file"
 }
 
+validate_state_dir() {
+	case "$ORBITALD_STATE_DIR" in
+		/*) ;;
+		*) die "ORBITALD_STATE_DIR must be an absolute path: $ORBITALD_STATE_DIR" ;;
+	esac
+
+	case "$ORBITALD_STATE_DIR" in
+		/|/home|/private|/private/tmp|/srv|/tmp|/usr|/usr/local|/var|/var/lib)
+			die "refusing to manage unsafe ORBITALD_STATE_DIR '$ORBITALD_STATE_DIR'"
+			;;
+	esac
+
+	if [ -L "$ORBITALD_STATE_DIR" ]; then
+		die "refusing to manage symlinked ORBITALD_STATE_DIR '$ORBITALD_STATE_DIR'"
+	fi
+}
+
 install_state_dir() {
+	validate_state_dir
+
 	log "Creating state directory $ORBITALD_STATE_DIR"
 	"$INSTALL" -d -m 0750 -o "$ORBITALD_USER" -g "$ORBITALD_GROUP" "$ORBITALD_STATE_DIR"
+	"$INSTALL" -d -m 0750 -o "$ORBITALD_USER" -g "$ORBITALD_GROUP" "$ORBITALD_STATE_DIR/runs"
+	"$INSTALL" -d -m 0700 -o "$ORBITALD_USER" -g "$ORBITALD_GROUP" "$ORBITALD_STATE_DIR/.docker"
+
+	log "Ensuring state directory ownership for $ORBITALD_USER:$ORBITALD_GROUP"
+	chown -R "$ORBITALD_USER:$ORBITALD_GROUP" "$ORBITALD_STATE_DIR"
+	chmod 0750 "$ORBITALD_STATE_DIR" "$ORBITALD_STATE_DIR/runs"
+	chmod 0700 "$ORBITALD_STATE_DIR/.docker"
 }
 
 install_containerd_dropin() {

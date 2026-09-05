@@ -174,6 +174,38 @@ func TestRunLogsReadsRelativePathAndTailsAfterTarget(t *testing.T) {
 	}
 }
 
+func TestRunLogsReportsStartupErrorWhenLogWasNeverCreated(t *testing.T) {
+	start := mustTime(t, "2026-09-05T14:22:49Z")
+	state := orbitald.StateSnapshot{
+		Results: []orbitald.ResultRecord{
+			{
+				ID:         "result-startup-failed",
+				RunID:      "run-startup-failed",
+				Function:   "payload-copy",
+				WindowID:   "window-startup-failed",
+				Status:     orbitald.WindowFailed,
+				StartedAt:  start,
+				FinishedAt: start,
+				Error:      "mkdir /var/lib/orbitald/runs/run-startup-failed: permission denied",
+			},
+		},
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cfg := testCLI(t, state, orbitald.DefaultStateDir, &out, &errOut)
+	err := cfg.runLogs([]string{"run-startup-failed"})
+	if err == nil {
+		t.Fatal("expected startup error")
+	}
+	if got := err.Error(); !strings.Contains(got, "run failed before log file was created") || !strings.Contains(got, "permission denied") {
+		t.Fatalf("unexpected error %q", got)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("expected no log output, got %q", out.String())
+	}
+}
+
 func assertStatus(t *testing.T, statuses map[string]string, id, want string) {
 	t.Helper()
 	if got := statuses[id]; got != want {
