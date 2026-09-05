@@ -7,12 +7,10 @@ CLIBINDIR=${CLIBINDIR:-"$BINDIR"}
 UNITDIR=${UNITDIR:-"$PREFIX/lib/systemd/system"}
 DESTDIR=${DESTDIR:-}
 ORBITALD_STATE_DIR=${ORBITALD_STATE_DIR:-/var/lib/orbitald}
-CONTAINERD_GROUP=${CONTAINERD_GROUP:-containerd}
 REMOVE_CONTAINERD=${REMOVE_CONTAINERD:-ask}
 PURGE_STATE=${PURGE_STATE:-0}
 SYSTEMD_RELOAD=${SYSTEMD_RELOAD:-1}
 STOP_SERVICE=${STOP_SERVICE:-1}
-REMOVE_CONTAINERD_DROPIN=${REMOVE_CONTAINERD_DROPIN:-1}
 
 log() {
 	printf 'INFO: %s\n' "$*"
@@ -106,8 +104,7 @@ remove_installed_files() {
 	fi
 }
 
-remove_containerd_dropin() {
-	is_truthy "$REMOVE_CONTAINERD_DROPIN" || return
+remove_legacy_containerd_dropin() {
 	[ -z "$DESTDIR" ] || return
 
 	dropin_file=/etc/systemd/system/containerd.service.d/orbitald-socket-permissions.conf
@@ -192,9 +189,6 @@ maybe_remove_containerd() {
 	fi
 
 	log "Keeping containerd installed"
-	if command_exists gpasswd; then
-		log "Leaving group '$CONTAINERD_GROUP' unchanged"
-	fi
 }
 
 main() {
@@ -211,7 +205,7 @@ main() {
 	require_root
 	stop_orbitald_service
 	remove_installed_files
-	remove_containerd_dropin
+	remove_legacy_containerd_dropin
 	reload_systemd
 	purge_state_dir
 	maybe_remove_containerd

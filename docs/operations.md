@@ -43,16 +43,14 @@ The install places:
 
 The install script logs each step and will install `containerd` when it is missing on hosts with `apt-get`, `dnf`, `yum`, `zypper`, `pacman`, or `apk`. Set `INSTALL_DEPS=0` to skip dependency installation.
 
-By default it configures the existing user that invoked `sudo`:
+By default it configures the systemd service to run as `root`:
 
-- state directory `/var/lib/orbitald`, owned by that user and its primary group with mode `0750`
-- group `containerd` if missing, then adds the user to it
-- `SupplementaryGroups=containerd` in the generated systemd unit
-- a systemd drop-in that keeps `/run/containerd/containerd.sock` group-owned by `containerd` with mode `0660`
+- state directory `/var/lib/orbitald`, owned by `root:root` with mode `0750`
+- `User=root` and `Group=root` in the generated systemd unit
+- cleanup of the obsolete containerd socket permission drop-in from older installs
 
-The containerd runtime/snapshotter still needs to be able to perform mount
-operations for the selected snapshotter. If the host or containerd deployment
-blocks those mounts, function runs will fail during task creation.
+This matches the default rootful containerd deployment model and avoids mount
+and snapshotter permission failures during function startup.
 
 Useful overrides:
 
@@ -60,29 +58,12 @@ Useful overrides:
 sudo make install-system \
   PREFIX=/usr/local \
   CLIBINDIR=/usr/local/bin \
-  ORBITALD_USER=myuser \
-  ORBITALD_GROUP=myuser \
   ORBITALD_STATE_DIR=/var/lib/orbitald \
   ORBITALD_SNAPSHOTTER=overlayfs \
-  CONTAINERD_GROUP=containerd \
   CONTAINERD_SOCK=/run/containerd/containerd.sock
 ```
 
-For a rootless containerd deployment, point `orbitald` at the user's containerd
-socket and set the snapshotter to one supported by that rootless containerd
-instance:
-
-```bash
-sudo make install-system \
-  ORBITALD_USER=myuser \
-  ORBITALD_GROUP=myuser \
-  CONTAINERD_SOCK=/run/user/1000/containerd/containerd.sock \
-  ORBITALD_SNAPSHOTTER=fuse-overlayfs \
-  CONFIGURE_CONTAINERD_SOCKET_PERMS=0 \
-  START_CONTAINERD=0
-```
-
-Set `DESTDIR` to stage files for packaging without creating users, installing dependencies, or touching systemd:
+Set `DESTDIR` to stage files for packaging without installing dependencies or touching systemd:
 
 ```bash
 make install DESTDIR=/tmp/orbitald-package-root
@@ -90,7 +71,7 @@ make install DESTDIR=/tmp/orbitald-package-root
 
 Then enable the service with `sudo systemctl enable --now orbitald`.
 
-The checked-in systemd unit is a template. The install script rewrites `User=`, `Group=`, `SupplementaryGroups=`, `ExecStart=`, and `WorkingDirectory=` before installing it.
+The checked-in systemd unit is a template. The install script rewrites `ExecStart` and `WorkingDirectory` before installing it.
 
 - [hack/orbitald.service](../hack/orbitald.service)
 
@@ -136,13 +117,13 @@ Use `--addr` when `orbitald` is listening somewhere other than `http://127.0.0.1
 
 ## Uninstall
 
-Remove the service, installed binaries, systemd unit, and orbitald's containerd socket permission drop-in:
+Remove the service, installed binaries, and systemd unit:
 
 ```bash
 sudo make uninstall
 ```
 
-The uninstall script logs each step and asks before removing the `containerd` package. It preserves `/var/lib/orbitald` by default.
+The uninstall script logs each step, removes the obsolete containerd socket permission drop-in from older installs if present, and asks before removing the `containerd` package. It preserves `/var/lib/orbitald` by default.
 
 Useful overrides:
 

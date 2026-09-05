@@ -155,7 +155,9 @@ obd container stop <run-id>
 
 `fn` and `list` commands use the `orbitald` HTTP API snapshot. `container` status/info/stop commands inspect live containerd containers in the `orbitald` namespace.
 
-For a node deployment, run `orbitald` under an existing non-root user with:
+For a node deployment, the systemd install runs `orbitald` as `root` so the
+container runtime can perform the required mount and snapshotter operations.
+The daemon needs:
 
 - write access to the configured state directory
 - access to the `containerd` socket, usually `/run/containerd/containerd.sock`
@@ -163,8 +165,7 @@ For a node deployment, run `orbitald` under an existing non-root user with:
 - a containerd runtime/snapshotter setup that can perform the required mount operations
 
 Set `ORBITALD_SNAPSHOTTER` during install when the target containerd instance
-does not use `overlayfs`, such as rootless containerd setups using
-`fuse-overlayfs`.
+does not use `overlayfs`.
 
 See [docs/operations.md](docs/operations.md) for the install and systemd setup.
 
