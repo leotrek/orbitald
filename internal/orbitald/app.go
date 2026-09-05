@@ -13,6 +13,9 @@ import (
 type runtimeExecutor interface {
 	EnsureImage(ctx context.Context, imageRef string) error
 	Run(ctx context.Context, fn FunctionSpec, window WindowRecord) (ResultRecord, error)
+	ListContainers(ctx context.Context) ([]ContainerInfo, error)
+	ContainerInfo(ctx context.Context, id string) (ContainerInfo, error)
+	StopContainerTask(ctx context.Context, id string) error
 }
 
 type App struct {

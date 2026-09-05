@@ -41,6 +41,84 @@ func NewExecutor(sock, stateDir, dockerConfigDir, snapshotter string) *Executor 
 	}
 }
 
+func (e *Executor) ListContainers(ctx context.Context) ([]ContainerInfo, error) {
+	client, nsCtx, err := e.containerdClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	containers, err := client.Containers(nsCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	infos := make([]ContainerInfo, 0, len(containers))
+	for _, item := range containers {
+		info, err := containerInfoFrom(nsCtx, item)
+		if err != nil {
+			return nil, err
+		}
+		infos = append(infos, info)
+	}
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].ID < infos[j].ID
+	})
+	return infos, nil
+}
+
+func (e *Executor) ContainerInfo(ctx context.Context, id string) (ContainerInfo, error) {
+	client, nsCtx, err := e.containerdClient(ctx)
+	if err != nil {
+		return ContainerInfo{}, err
+	}
+	defer client.Close()
+
+	container, err := client.LoadContainer(nsCtx, id)
+	if err != nil {
+		return ContainerInfo{}, err
+	}
+	return containerInfoFrom(nsCtx, container)
+}
+
+func (e *Executor) StopContainerTask(ctx context.Context, id string) error {
+	client, nsCtx, err := e.containerdClient(ctx)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	container, err := client.LoadContainer(nsCtx, id)
+	if err != nil {
+		return err
+	}
+	task, err := container.Task(nsCtx, nil)
+	if errdefs.IsNotFound(err) {
+		return fmt.Errorf("container %q has no running task", id)
+	}
+	if err != nil {
+		return err
+	}
+
+	waitCh, waitErr := task.Wait(nsCtx)
+	if err := task.Kill(nsCtx, unix.SIGTERM, containerd.WithKillAll); err != nil && !errdefs.IsNotFound(err) {
+		return err
+	}
+	if waitErr != nil {
+		return nil
+	}
+
+	select {
+	case <-waitCh:
+		return nil
+	case <-time.After(3 * time.Second):
+		if err := task.Kill(nsCtx, unix.SIGKILL, containerd.WithKillAll); err != nil && !errdefs.IsNotFound(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (e *Executor) EnsureImage(ctx context.Context, imageRef string) error {
 	client, err := containerd.New(e.sock)
 	if err != nil {
@@ -252,6 +330,53 @@ func (e *Executor) Run(ctx context.Context, fn FunctionSpec, window WindowRecord
 	}
 
 	return result, errorsFrom(result.Error)
+}
+
+func (e *Executor) containerdClient(ctx context.Context) (*containerd.Client, context.Context, error) {
+	client, err := containerd.New(e.sock)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client, namespaces.WithNamespace(ctx, RuntimeNamespace), nil
+}
+
+func containerInfoFrom(ctx context.Context, item containerd.Container) (ContainerInfo, error) {
+	raw, err := item.Info(ctx)
+	if err != nil {
+		return ContainerInfo{}, err
+	}
+
+	info := ContainerInfo{
+		ID:         raw.ID,
+		Image:      raw.Image,
+		Runtime:    raw.Runtime.Name,
+		TaskStatus: "stopped",
+		CreatedAt:  raw.CreatedAt,
+		UpdatedAt:  raw.UpdatedAt,
+		Labels:     raw.Labels,
+	}
+
+	task, err := item.Task(ctx, nil)
+	if errdefs.IsNotFound(err) {
+		return info, nil
+	}
+	if err != nil {
+		info.TaskStatus = "unknown"
+		return info, nil
+	}
+
+	status, err := task.Status(ctx)
+	if err != nil {
+		info.TaskStatus = "unknown"
+		return info, nil
+	}
+	info.TaskStatus = string(status.Status)
+	info.ExitStatus = status.ExitStatus
+	if !status.ExitTime.IsZero() {
+		exitTime := status.ExitTime
+		info.ExitTime = &exitTime
+	}
+	return info, nil
 }
 
 func ensureImagePresent(ctx context.Context, client *containerd.Client, imageName, snapshotter, dockerConfigDir string) (containerd.Image, error) {

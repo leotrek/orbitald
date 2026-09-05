@@ -105,17 +105,9 @@ obd task start capture --image ghcr.io/acme/capture:latest
 obd task stop capture
 ```
 
-Low-level container runtime aliases:
-
-```bash
-obd container status
-obd container info <run-id>
-obd container stop <run-id>
-```
-
 `task list` includes pending, running, stopped, failed, and expired orbitald executions. When the local containerd socket is reachable, it also includes live containers in the `orbitald` namespace.
 
-Use `--addr` when `orbitald` is listening somewhere other than `http://127.0.0.1:8080`. Use `--containerd-sock` when the socket is not `/run/containerd/containerd.sock`.
+Use `--addr` when `orbitald` is listening somewhere other than `http://127.0.0.1:8080`. Configure a non-default containerd socket on the daemon with `orbitald -containerd-sock`.
 
 ## Uninstall
 

@@ -120,6 +120,113 @@ type StateSnapshot struct {
 	Results   []ResultRecord `json:"results"`
 }
 
+type FunctionDetails struct {
+	Function FunctionSpec   `json:"function"`
+	Windows  []WindowRecord `json:"windows"`
+	Results  []ResultRecord `json:"results"`
+}
+
+type ContainerInfo struct {
+	ID         string            `json:"id"`
+	Image      string            `json:"image"`
+	Runtime    string            `json:"runtime"`
+	TaskStatus string            `json:"task_status"`
+	ExitStatus uint32            `json:"exit_status,omitempty"`
+	ExitTime   *time.Time        `json:"exit_time,omitempty"`
+	CreatedAt  time.Time         `json:"created_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
+	Labels     map[string]string `json:"labels,omitempty"`
+}
+
+type TaskInfo struct {
+	ID                string     `json:"id"`
+	Function          string     `json:"function"`
+	Status            string     `json:"status"`
+	Image             string     `json:"image,omitempty"`
+	ContainerID       string     `json:"container_id,omitempty"`
+	WindowID          string     `json:"window_id,omitempty"`
+	WindowStatus      string     `json:"window_status,omitempty"`
+	RunID             string     `json:"run_id,omitempty"`
+	ResultID          string     `json:"result_id,omitempty"`
+	ResultStatus      string     `json:"result_status,omitempty"`
+	ExitCode          *uint32    `json:"exit_code,omitempty"`
+	Area              string     `json:"area,omitempty"`
+	StartAt           *time.Time `json:"start_at,omitempty"`
+	EndAt             *time.Time `json:"end_at,omitempty"`
+	TriggeredAt       *time.Time `json:"triggered_at,omitempty"`
+	StartedAt         *time.Time `json:"started_at,omitempty"`
+	FinishedAt        *time.Time `json:"finished_at,omitempty"`
+	PayloadPath       string     `json:"payload_path,omitempty"`
+	OutputDir         string     `json:"output_dir,omitempty"`
+	LogPath           string     `json:"log_path,omitempty"`
+	UploadConfirmedAt *time.Time `json:"upload_confirmed_at,omitempty"`
+	Error             string     `json:"error,omitempty"`
+}
+
+type TaskListResponse struct {
+	Tasks        []TaskInfo `json:"tasks"`
+	RuntimeError string     `json:"runtime_error,omitempty"`
+}
+
+type TaskLogResponse struct {
+	ID      string `json:"id"`
+	LogPath string `json:"log_path"`
+	Log     string `json:"log"`
+}
+
+type TaskStartRequest struct {
+	Name       string            `json:"name"`
+	Image      string            `json:"image,omitempty"`
+	Area       string            `json:"area,omitempty"`
+	Payload    json.RawMessage   `json:"payload,omitempty"`
+	Duration   string            `json:"duration,omitempty"`
+	Memory     string            `json:"memory,omitempty"`
+	RunTimeout string            `json:"run_timeout,omitempty"`
+	User       string            `json:"user,omitempty"`
+	Command    []string          `json:"command,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+}
+
+type TaskStartResponse struct {
+	Version  string       `json:"version"`
+	NodeTime time.Time    `json:"node_time"`
+	Window   WindowRecord `json:"window"`
+}
+
+type TaskStopResponse struct {
+	Stopped []string `json:"stopped"`
+}
+
+type StatusResponse struct {
+	Status   string        `json:"status"`
+	Version  string        `json:"version"`
+	NodeTime time.Time     `json:"node_time"`
+	State    StateCounts   `json:"state"`
+	Runtime  RuntimeStatus `json:"runtime"`
+}
+
+type StateCounts struct {
+	Functions     int          `json:"functions"`
+	Windows       WindowCounts `json:"windows"`
+	Results       int          `json:"results"`
+	PendingUpload int          `json:"pending_upload"`
+}
+
+type WindowCounts struct {
+	Pending int `json:"pending"`
+	Running int `json:"running"`
+	Success int `json:"success"`
+	Failed  int `json:"failed"`
+	Expired int `json:"expired"`
+}
+
+type RuntimeStatus struct {
+	Namespace  string `json:"namespace"`
+	Socket     string `json:"socket"`
+	Containers int    `json:"containers"`
+	Error      string `json:"error,omitempty"`
+}
+
 func newID(prefix string) string {
 	cleanPrefix := strings.ToLower(prefix)
 	cleanPrefix = strings.Map(func(r rune) rune {

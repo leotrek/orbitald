@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,137 +12,81 @@ import (
 	"github.com/orbitald/orbitald/internal/orbitald"
 )
 
-func TestSortedFunctionsReturnsAllFunctionsByName(t *testing.T) {
-	functions := sortedFunctions([]orbitald.FunctionSpec{
-		{Name: "capture", Image: "ghcr.io/acme/capture:latest"},
-		{Name: "analyze", Image: "ghcr.io/acme/analyze:latest"},
+func TestStatusFetchesStatusEndpoint(t *testing.T) {
+	now := mustTime(t, "2026-09-05T12:00:00Z")
+	cfg := testCLI(t, func(r *http.Request) (any, int) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/status" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		return orbitald.StatusResponse{
+			Status:   "ok",
+			Version:  orbitald.Version,
+			NodeTime: now,
+			State: orbitald.StateCounts{
+				Functions:     2,
+				Results:       3,
+				PendingUpload: 1,
+				Windows: orbitald.WindowCounts{
+					Pending: 1,
+					Running: 1,
+					Success: 1,
+				},
+			},
+			Runtime: orbitald.RuntimeStatus{
+				Namespace:  orbitald.RuntimeNamespace,
+				Socket:     "/run/containerd/containerd.sock",
+				Containers: 4,
+			},
+		}, http.StatusOK
 	})
 
-	if len(functions) != 2 {
-		t.Fatalf("expected 2 functions, got %d", len(functions))
-	}
-	if functions[0].Name != "analyze" || functions[1].Name != "capture" {
-		t.Fatalf("functions were not sorted by name: %#v", functions)
-	}
-}
-
-func TestBuildRunInfosReturnsAllSnapshotStates(t *testing.T) {
-	start := mustTime(t, "2026-09-05T12:00:00Z")
-	finish := mustTime(t, "2026-09-05T12:01:00Z")
-
-	instances := buildRunInfos(orbitald.StateSnapshot{
-		Functions: []orbitald.FunctionSpec{
-			{Name: "capture", Image: "ghcr.io/acme/capture:latest"},
-		},
-		Windows: []orbitald.WindowRecord{
-			{
-				WindowSpec: orbitald.WindowSpec{ID: "window-pending", Function: "capture", Area: "manual", StartAt: start, EndAt: start.Add(time.Minute)},
-				Status:     orbitald.WindowPending,
-			},
-			{
-				WindowSpec:  orbitald.WindowSpec{ID: "window-running", Function: "capture", Area: "manual", StartAt: start, EndAt: start.Add(time.Minute)},
-				Status:      orbitald.WindowRunning,
-				RunID:       "run-running",
-				TriggeredAt: &start,
-			},
-			{
-				WindowSpec:  orbitald.WindowSpec{ID: "window-ok", Function: "capture", Area: "manual", StartAt: start, EndAt: start.Add(time.Minute)},
-				Status:      orbitald.WindowSuccess,
-				RunID:       "run-ok",
-				TriggeredAt: &start,
-				FinishedAt:  &finish,
-			},
-			{
-				WindowSpec:  orbitald.WindowSpec{ID: "window-failed", Function: "capture", Area: "manual", StartAt: start, EndAt: start.Add(time.Minute)},
-				Status:      orbitald.WindowFailed,
-				RunID:       "run-failed",
-				TriggeredAt: &start,
-				FinishedAt:  &finish,
-				Error:       "window failed",
-			},
-			{
-				WindowSpec: orbitald.WindowSpec{ID: "window-expired", Function: "capture", Area: "manual", StartAt: start, EndAt: start.Add(time.Minute)},
-				Status:     orbitald.WindowExpired,
-				FinishedAt: &finish,
-				Error:      "window closed",
-			},
-		},
-		Results: []orbitald.ResultRecord{
-			{ID: "result-ok", RunID: "run-ok", Function: "capture", WindowID: "window-ok", Status: orbitald.WindowSuccess, ExitCode: 0, StartedAt: start, FinishedAt: finish},
-			{ID: "result-failed", RunID: "run-failed", Function: "capture", WindowID: "window-failed", Status: orbitald.WindowFailed, ExitCode: 1, StartedAt: start, FinishedAt: finish, Error: "boom"},
-		},
-	}, "")
-
-	statuses := map[string]string{}
-	for _, instance := range instances {
-		statuses[instance.ID] = instance.Status
-	}
-
-	assertStatus(t, statuses, "window-pending", "pending")
-	assertStatus(t, statuses, "run-running", "running")
-	assertStatus(t, statuses, "run-ok", "stopped")
-	assertStatus(t, statuses, "run-failed", "error")
-	assertStatus(t, statuses, "window-expired", "expired")
-}
-
-func TestBuildRunInfosIncludesOrphanResults(t *testing.T) {
-	start := mustTime(t, "2026-09-05T12:00:00Z")
-	finish := mustTime(t, "2026-09-05T12:01:00Z")
-
-	instances := buildRunInfos(orbitald.StateSnapshot{
-		Results: []orbitald.ResultRecord{
-			{ID: "result-orphan", RunID: "run-orphan", Function: "capture", WindowID: "missing-window", Status: orbitald.WindowFailed, ExitCode: 2, StartedAt: start, FinishedAt: finish, Error: "lost window"},
-		},
-	}, "")
-
-	if len(instances) != 1 {
-		t.Fatalf("expected 1 instance, got %d", len(instances))
-	}
-	if instances[0].ID != "run-orphan" || instances[0].Status != "error" || instances[0].Error != "lost window" {
-		t.Fatalf("unexpected orphan instance: %#v", instances[0])
-	}
-}
-
-func TestRunInfoFindsByResultID(t *testing.T) {
-	start := mustTime(t, "2026-09-05T12:00:00Z")
-	finish := mustTime(t, "2026-09-05T12:01:00Z")
-	state := orbitald.StateSnapshot{
-		Results: []orbitald.ResultRecord{
-			{
-				ID:         "result-ok",
-				RunID:      "run-ok",
-				Function:   "capture",
-				WindowID:   "window-ok",
-				Status:     orbitald.WindowSuccess,
-				ExitCode:   0,
-				StartedAt:  start,
-				FinishedAt: finish,
-				LogPath:    "/var/lib/orbitald/runs/run-ok/run.log",
-			},
-		},
-	}
-
 	var out bytes.Buffer
-	var errOut bytes.Buffer
-	cfg := testCLI(t, state, orbitald.DefaultStateDir, &out, &errOut)
-	if err := cfg.runInfo([]string{"result-ok"}); err != nil {
+	cfg.out = &out
+	if err := cfg.status(nil); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "run: run-ok") || !strings.Contains(out.String(), "result: result-ok") {
-		t.Fatalf("unexpected output:\n%s", out.String())
+	got := out.String()
+	for _, want := range []string{"daemon: ok", "functions: 2", "pending=1 running=1 success=1", "pending_upload=1", "namespace: orbitald", "containers: 4"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected status output to contain %q:\n%s", want, got)
+		}
 	}
 }
 
-func TestImageInspectFindsFunction(t *testing.T) {
-	state := orbitald.StateSnapshot{
-		Functions: []orbitald.FunctionSpec{
-			{Name: "capture", Image: "ghcr.io/acme/capture:latest", Timeout: "2m"},
-		},
-	}
+func TestImagesFetchesImagesEndpoint(t *testing.T) {
+	cfg := testCLI(t, func(r *http.Request) (any, int) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/images" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		return []orbitald.FunctionSpec{
+			{Name: "capture", Image: "ghcr.io/acme/capture:latest"},
+			{Name: "analyze", Image: "ghcr.io/acme/analyze:latest"},
+		}, http.StatusOK
+	})
 
 	var out bytes.Buffer
-	var errOut bytes.Buffer
-	cfg := testCLI(t, state, orbitald.DefaultStateDir, &out, &errOut)
+	cfg.out = &out
+	if err := cfg.images(nil); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "capture") || !strings.Contains(got, "ghcr.io/acme/analyze:latest") {
+		t.Fatalf("unexpected image list output:\n%s", got)
+	}
+}
+
+func TestImageInspectFetchesImageEndpoint(t *testing.T) {
+	cfg := testCLI(t, func(r *http.Request) (any, int) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/images/capture" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		return orbitald.FunctionDetails{
+			Function: orbitald.FunctionSpec{Name: "capture", Image: "ghcr.io/acme/capture:latest"},
+		}, http.StatusOK
+	})
+
+	var out bytes.Buffer
+	cfg.out = &out
 	if err := cfg.image([]string{"inspect", "capture"}); err != nil {
 		t.Fatal(err)
 	}
@@ -153,31 +95,22 @@ func TestImageInspectFindsFunction(t *testing.T) {
 	}
 }
 
-func TestTaskDescribeFindsByResultID(t *testing.T) {
-	start := mustTime(t, "2026-09-05T12:00:00Z")
-	finish := mustTime(t, "2026-09-05T12:01:00Z")
-	state := orbitald.StateSnapshot{
-		Functions: []orbitald.FunctionSpec{
-			{Name: "capture", Image: "ghcr.io/acme/capture:latest"},
-		},
-		Results: []orbitald.ResultRecord{
-			{
-				ID:         "result-ok",
-				RunID:      "run-ok",
-				Function:   "capture",
-				WindowID:   "window-ok",
-				Status:     orbitald.WindowSuccess,
-				ExitCode:   0,
-				StartedAt:  start,
-				FinishedAt: finish,
-				LogPath:    "/var/lib/orbitald/runs/run-ok/run.log",
-			},
-		},
-	}
+func TestTaskDescribeFetchesTaskEndpoint(t *testing.T) {
+	cfg := testCLI(t, func(r *http.Request) (any, int) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks/result-ok" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		return orbitald.TaskInfo{
+			ID:       "run-ok",
+			Function: "capture",
+			Status:   "stopped",
+			ResultID: "result-ok",
+			Image:    "ghcr.io/acme/capture:latest",
+		}, http.StatusOK
+	})
 
 	var out bytes.Buffer
-	var errOut bytes.Buffer
-	cfg := testCLI(t, state, orbitald.DefaultStateDir, &out, &errOut)
+	cfg.out = &out
 	if err := cfg.task([]string{"describe", "result-ok"}); err != nil {
 		t.Fatal(err)
 	}
@@ -186,65 +119,37 @@ func TestTaskDescribeFindsByResultID(t *testing.T) {
 	}
 }
 
-func TestMergeContainerInfosIncludesOrphanContainers(t *testing.T) {
-	start := mustTime(t, "2026-09-05T12:00:00Z")
-	instances := []runInfo{
-		{ID: "run-existing", RunID: "run-existing", Function: "capture", Status: "running"},
-	}
-	containers := []containerInfo{
-		{ID: "run-existing", Image: "ghcr.io/acme/capture:latest", TaskStatus: "running", CreatedAt: start},
-		{ID: "orphan-container", Image: "ghcr.io/acme/orphan:latest", TaskStatus: "running", CreatedAt: start.Add(time.Minute)},
-	}
+func TestTaskListFetchesFunctionFilter(t *testing.T) {
+	cfg := testCLI(t, func(r *http.Request) (any, int) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks" || r.URL.Query().Get("function") != "capture" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		return orbitald.TaskListResponse{
+			Tasks: []orbitald.TaskInfo{{ID: "run-ok", Function: "capture", Status: "stopped"}},
+		}, http.StatusOK
+	})
 
-	merged := mergeContainerInfos(instances, containers, "")
-	byID := map[string]runInfo{}
-	for _, item := range merged {
-		byID[item.ID] = item
+	var out bytes.Buffer
+	cfg.out = &out
+	if err := cfg.task([]string{"list", "capture"}); err != nil {
+		t.Fatal(err)
 	}
-
-	existing := byID["run-existing"]
-	if existing.ContainerID != "run-existing" || existing.Image != "ghcr.io/acme/capture:latest" {
-		t.Fatalf("existing task did not receive container data: %#v", existing)
-	}
-
-	orphan := byID["orphan-container"]
-	if orphan.ContainerID != "orphan-container" || orphan.Status != "running" || orphan.Image != "ghcr.io/acme/orphan:latest" {
-		t.Fatalf("orphan container was not included as a task: %#v", orphan)
+	if !strings.Contains(out.String(), "run-ok") || !strings.Contains(out.String(), "capture") {
+		t.Fatalf("unexpected output:\n%s", out.String())
 	}
 }
 
-func TestRunLogsReadsRelativePathAndTailsAfterTarget(t *testing.T) {
-	start := mustTime(t, "2026-09-05T12:00:00Z")
-	finish := mustTime(t, "2026-09-05T12:01:00Z")
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "runs", "run-ok", "run.log")
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(logPath, []byte("one\ntwo\nthree\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	state := orbitald.StateSnapshot{
-		Results: []orbitald.ResultRecord{
-			{
-				ID:         "result-ok",
-				RunID:      "run-ok",
-				Function:   "capture",
-				WindowID:   "window-ok",
-				Status:     orbitald.WindowSuccess,
-				ExitCode:   0,
-				StartedAt:  start,
-				FinishedAt: finish,
-				LogPath:    "runs/run-ok/run.log",
-			},
-		},
-	}
+func TestTaskLogsFetchesTailFromEndpoint(t *testing.T) {
+	cfg := testCLI(t, func(r *http.Request) (any, int) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks/run-ok/logs" || r.URL.Query().Get("tail") != "2" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		return orbitald.TaskLogResponse{ID: "run-ok", Log: "two\nthree\n"}, http.StatusOK
+	})
 
 	var out bytes.Buffer
-	var errOut bytes.Buffer
-	cfg := testCLI(t, state, dir, &out, &errOut)
-	if err := cfg.runCmd([]string{"logs", "run-ok", "--tail", "2"}); err != nil {
+	cfg.out = &out
+	if err := cfg.taskLogs([]string{"run-ok", "--tail", "2"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := out.String(); got != "two\nthree\n" {
@@ -252,72 +157,160 @@ func TestRunLogsReadsRelativePathAndTailsAfterTarget(t *testing.T) {
 	}
 }
 
-func TestRunLogsReportsStartupErrorWhenLogWasNeverCreated(t *testing.T) {
-	start := mustTime(t, "2026-09-05T14:22:49Z")
-	state := orbitald.StateSnapshot{
-		Results: []orbitald.ResultRecord{
-			{
-				ID:         "result-startup-failed",
-				RunID:      "run-startup-failed",
-				Function:   "payload-copy",
-				WindowID:   "window-startup-failed",
-				Status:     orbitald.WindowFailed,
-				StartedAt:  start,
-				FinishedAt: start,
-				Error:      "mkdir /var/lib/orbitald/runs/run-startup-failed: permission denied",
+func TestTaskStartPostsStartRequest(t *testing.T) {
+	cfg := testCLI(t, func(r *http.Request) (any, int) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		var request orbitald.TaskStartRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Name != "capture" || request.Image != "ghcr.io/acme/capture:latest" || request.Duration != "10m0s" {
+			t.Fatalf("unexpected request body: %#v", request)
+		}
+		if string(request.Payload) != `{"camera":"nadir"}` {
+			t.Fatalf("unexpected payload %s", request.Payload)
+		}
+		now := mustTime(t, "2026-09-05T12:00:00Z")
+		return orbitald.TaskStartResponse{
+			Version:  orbitald.Version,
+			NodeTime: now,
+			Window: orbitald.WindowRecord{
+				WindowSpec: orbitald.WindowSpec{
+					ID:       "manual-capture-20260905t120000z",
+					Function: "capture",
+					Area:     "manual",
+					StartAt:  now,
+					EndAt:    now.Add(10 * time.Minute),
+				},
+				Status: orbitald.WindowPending,
 			},
-		},
-	}
+		}, http.StatusOK
+	})
 
 	var out bytes.Buffer
-	var errOut bytes.Buffer
-	cfg := testCLI(t, state, orbitald.DefaultStateDir, &out, &errOut)
-	err := cfg.runLogs([]string{"run-startup-failed"})
-	if err == nil {
-		t.Fatal("expected startup error")
+	cfg.out = &out
+	err := cfg.taskStart([]string{"capture", "--image", "ghcr.io/acme/capture:latest", "--payload", `{"camera":"nadir"}`})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := err.Error(); !strings.Contains(got, "run failed before log file was created") || !strings.Contains(got, "permission denied") {
-		t.Fatalf("unexpected error %q", got)
-	}
-	if out.Len() != 0 {
-		t.Fatalf("expected no log output, got %q", out.String())
+	if !strings.Contains(out.String(), "queued manual-capture-20260905t120000z for function capture") {
+		t.Fatalf("unexpected output:\n%s", out.String())
 	}
 }
 
-func assertStatus(t *testing.T, statuses map[string]string, id, want string) {
-	t.Helper()
-	if got := statuses[id]; got != want {
-		t.Fatalf("expected %s to be %q, got %q", id, want, got)
+func TestTaskStartPostsImageOptions(t *testing.T) {
+	cfg := testCLI(t, func(r *http.Request) (any, int) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		var request orbitald.TaskStartRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Name != "capture" || request.Area != "science" || request.Duration != "30s" {
+			t.Fatalf("unexpected base request fields: %#v", request)
+		}
+		if request.Image != "ghcr.io/acme/capture:latest" || request.Memory != "128Mi" || request.RunTimeout != "20s" || request.User != "1000" {
+			t.Fatalf("unexpected image request fields: %#v", request)
+		}
+		if len(request.Command) != 2 || request.Command[0] != "/app/capture" || request.Command[1] != "survey" {
+			t.Fatalf("unexpected command args: %#v", request.Command)
+		}
+		if request.Env["MODE"] != "survey" || request.Env["CAMERA"] != "nadir" {
+			t.Fatalf("unexpected env: %#v", request.Env)
+		}
+		now := mustTime(t, "2026-09-05T12:00:00Z")
+		return orbitald.TaskStartResponse{
+			Version:  orbitald.Version,
+			NodeTime: now,
+			Window: orbitald.WindowRecord{
+				WindowSpec: orbitald.WindowSpec{
+					ID:       "manual-capture-20260905t120000z",
+					Function: "capture",
+					Area:     "science",
+					StartAt:  now,
+					EndAt:    now.Add(30 * time.Second),
+				},
+				Status: orbitald.WindowPending,
+			},
+		}, http.StatusOK
+	})
+
+	var out bytes.Buffer
+	cfg.out = &out
+	err := cfg.taskStart([]string{
+		"capture",
+		"--image", "ghcr.io/acme/capture:latest",
+		"--area", "science",
+		"--duration", "30s",
+		"--memory", "128Mi",
+		"--run-timeout", "20s",
+		"--user", "1000",
+		"--arg", "/app/capture",
+		"--arg", "survey",
+		"--env", "MODE=survey",
+		"--env", "CAMERA=nadir",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "queued manual-capture-20260905t120000z for function capture") {
+		t.Fatalf("unexpected output:\n%s", out.String())
 	}
 }
 
-func testCLI(t *testing.T, state orbitald.StateSnapshot, stateDir string, out, errOut io.Writer) cli {
+func TestTaskStopPostsStopRequest(t *testing.T) {
+	cfg := testCLI(t, func(r *http.Request) (any, int) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks/run-ok/stop" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		return orbitald.TaskStopResponse{Stopped: []string{"run-ok"}}, http.StatusOK
+	})
+
+	var out bytes.Buffer
+	cfg.out = &out
+	if err := cfg.taskStop([]string{"run-ok"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "stopped run-ok" {
+		t.Fatalf("unexpected output %q", got)
+	}
+}
+
+func TestLegacyAliasesAreUnknown(t *testing.T) {
+	for _, command := range []string{"fn", "run", "list", "logs", "container", "tasks", "system"} {
+		var out bytes.Buffer
+		var errOut bytes.Buffer
+		code := run([]string{command}, &out, &errOut)
+		if code != 2 {
+			t.Fatalf("expected %q to exit 2, got %d", command, code)
+		}
+		if !strings.Contains(errOut.String(), "unknown command") {
+			t.Fatalf("expected unknown command error for %q, got:\n%s", command, errOut.String())
+		}
+	}
+}
+
+func testCLI(t *testing.T, handler func(*http.Request) (any, int)) cli {
 	t.Helper()
 	return cli{
 		endpoint: "http://orbitald.test",
-		stateDir: stateDir,
-		out:      out,
-		err:      errOut,
+		out:      io.Discard,
+		err:      io.Discard,
 		httpClient: &http.Client{
 			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				if r.URL.Path != "/v1/state" {
-					return &http.Response{
-						StatusCode: http.StatusNotFound,
-						Status:     "404 Not Found",
-						Body:       io.NopCloser(strings.NewReader("not found")),
-						Header:     make(http.Header),
-						Request:    r,
-					}, nil
-				}
-				data, err := json.Marshal(state)
+				value, status := handler(r)
+				data, err := json.Marshal(value)
 				if err != nil {
 					t.Fatal(err)
 				}
 				return &http.Response{
-					StatusCode: http.StatusOK,
-					Status:     "200 OK",
+					StatusCode: status,
+					Status:     http.StatusText(status),
 					Body:       io.NopCloser(bytes.NewReader(data)),
-					Header:     make(http.Header),
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
 					Request:    r,
 				}, nil
 			}),

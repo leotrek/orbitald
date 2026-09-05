@@ -19,7 +19,7 @@ It does not include:
 
 - a gateway compatibility layer
 - queue workers
-- Telemtry/ Prometheus
+- Telemetry/Prometheus
 - multi-replica autoscaling
 - clustering
 
@@ -49,7 +49,7 @@ Functions are not kept warm. Execution is always `0 -> 1 -> 0`.
 
 ### `POST /v1/contact/sync`
 
-This is the only write API you need.
+This is the Earth/node contact API for function registration, future windows, acknowledgements, and pending result upload.
 
 Example request:
 
@@ -96,6 +96,17 @@ Example response:
 ### `GET /v1/state`
 
 Returns the stored functions, windows, and result metadata.
+
+### Operator endpoints
+
+- `GET /v1/status` returns daemon, state, and container runtime status.
+- `GET /v1/images` lists registered function images.
+- `GET /v1/images/{name}` shows one function plus its windows and results.
+- `GET /v1/tasks` lists persisted executions and live runtime containers.
+- `POST /v1/tasks` queues a manual task window.
+- `GET /v1/tasks/{target}` inspects a task, run, window, result, or live container.
+- `GET /v1/tasks/{target}/logs` reads stored task logs, with optional `tail`.
+- `POST /v1/tasks/{target}/stop` stops a running task or live container.
 
 ### `GET /healthz`
 
@@ -151,7 +162,7 @@ obd task start capture --payload '{"camera":"nadir"}'
 obd task stop capture
 ```
 
-`images` shows registered runnable function specs. `task list` shows persisted orbitald executions and, when containerd is reachable, live containers in the `orbitald` namespace. Legacy `fn`, `run`, `list`, and `container` aliases are still accepted.
+`images` shows registered runnable function specs. `task list` shows persisted orbitald executions and, when containerd is reachable, live containers in the `orbitald` namespace.
 
 For a node deployment, the systemd install runs `orbitald` as `root` so the
 container runtime can perform the required mount and snapshotter operations.
