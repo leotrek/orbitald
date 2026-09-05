@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -570,6 +571,108 @@ func (c *cli) listRuns(args []string) error {
 	return nil
 }
 
+func (c *cli) runCmd(args []string) error {
+	if len(args) == 0 {
+		return c.listRuns(nil)
+	}
+
+	switch args[0] {
+	case "list", "ls", "status", "instance", "instances":
+		return c.listRuns(args[1:])
+	case "info", "show":
+		return c.runInfo(args[1:])
+	case "log", "logs":
+		return c.runLogs(args[1:])
+	case "stop":
+		return c.fnStop(args[1:])
+	case "help":
+		return c.help([]string{"run"})
+	default:
+		return fmt.Errorf("unknown run command %q", args[0])
+	}
+}
+
+func (c *cli) runInfo(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: obd run info RUN_ID|WINDOW_ID|RESULT_ID")
+	}
+
+	state, err := c.getState()
+	if err != nil {
+		return err
+	}
+
+	info, ok := findRunInfo(state, args[0])
+	if !ok {
+		return fmt.Errorf("run/window/result %q not found", args[0])
+	}
+
+	if c.jsonOutput {
+		return writePrettyJSON(c.out, info)
+	}
+
+	fmt.Fprintf(c.out, "run: %s\n", info.ID)
+	fmt.Fprintf(c.out, "  function: %s\n", info.Function)
+	fmt.Fprintf(c.out, "  status: %s\n", info.Status)
+	printOptional(c.out, "  window", info.WindowID)
+	printOptional(c.out, "  result", info.ResultID)
+	printOptional(c.out, "  run id", info.RunID)
+	if info.ExitCode != nil {
+		fmt.Fprintf(c.out, "  exit: %d\n", *info.ExitCode)
+	}
+	printOptional(c.out, "  area", info.Area)
+	printOptionalTime(c.out, "  start", info.StartAt)
+	printOptionalTime(c.out, "  end", info.EndAt)
+	printOptionalTime(c.out, "  triggered", info.TriggeredAt)
+	printOptionalTime(c.out, "  started", info.StartedAt)
+	printOptionalTime(c.out, "  finished", info.FinishedAt)
+	printOptional(c.out, "  payload", info.PayloadPath)
+	printOptional(c.out, "  output", info.OutputDir)
+	printOptional(c.out, "  log", logPathForRun(c.stateDir, info))
+	printOptionalTime(c.out, "  uploaded", info.UploadConfirmedAt)
+	printOptional(c.out, "  error", info.Error)
+	return nil
+}
+
+func (c *cli) runLogs(args []string) error {
+	target, tail, err := parseRunLogsArgs(args)
+	if err != nil {
+		return err
+	}
+
+	state, err := c.getState()
+	if err != nil {
+		return err
+	}
+
+	info, ok := findRunInfo(state, target)
+	if !ok {
+		return fmt.Errorf("run/window/result %q not found", target)
+	}
+
+	logPath := logPathForRun(c.stateDir, info)
+	if logPath == "" {
+		return fmt.Errorf("run/window/result %q has no log path", target)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return fmt.Errorf("read log %s: %w", logPath, err)
+	}
+	data = tailLog(data, tail)
+
+	if c.jsonOutput {
+		return writePrettyJSON(c.out, map[string]any{
+			"id":       info.ID,
+			"log_path": logPath,
+			"log":      string(data),
+		})
+	}
+
+	_, err = c.out.Write(data)
+	return err
+}
+
 func (c *cli) fnStart(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: obd fn start NAME [flags]")
@@ -1078,6 +1181,105 @@ func mergeResultIntoRun(info *runInfo, result orbitald.ResultRecord) {
 	info.Status = normalizeRunStatus(info.WindowStatus, result.Status)
 }
 
+func findRunInfo(state orbitald.StateSnapshot, target string) (runInfo, bool) {
+	instances := buildRunInfos(state, "")
+	for _, instance := range instances {
+		if target == instance.ID || target == instance.RunID {
+			return instance, true
+		}
+	}
+	for _, instance := range instances {
+		if target == instance.WindowID || target == instance.ResultID {
+			return instance, true
+		}
+	}
+	return runInfo{}, false
+}
+
+func logPathForRun(stateDir string, info runInfo) string {
+	if info.LogPath != "" {
+		if filepath.IsAbs(info.LogPath) {
+			return info.LogPath
+		}
+		return filepath.Join(stateDir, info.LogPath)
+	}
+	if info.RunID != "" {
+		return filepath.Join(stateDir, "runs", info.RunID, "run.log")
+	}
+	return ""
+}
+
+func parseRunLogsArgs(args []string) (string, int, error) {
+	target := ""
+	tail := -1
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--tail":
+			i++
+			if i >= len(args) {
+				return "", 0, fmt.Errorf("usage: obd run logs RUN_ID|WINDOW_ID|RESULT_ID [--tail N]")
+			}
+			value, err := parseTailValue(args[i])
+			if err != nil {
+				return "", 0, err
+			}
+			tail = value
+		case strings.HasPrefix(arg, "--tail="):
+			value, err := parseTailValue(strings.TrimPrefix(arg, "--tail="))
+			if err != nil {
+				return "", 0, err
+			}
+			tail = value
+		case strings.HasPrefix(arg, "-"):
+			return "", 0, fmt.Errorf("unknown flag %q", arg)
+		default:
+			if target != "" {
+				return "", 0, fmt.Errorf("unexpected argument %q", arg)
+			}
+			target = arg
+		}
+	}
+
+	if target == "" {
+		return "", 0, fmt.Errorf("usage: obd run logs RUN_ID|WINDOW_ID|RESULT_ID [--tail N]")
+	}
+	return target, tail, nil
+}
+
+func parseTailValue(value string) (int, error) {
+	tail, err := strconv.Atoi(value)
+	if err != nil || tail < 0 {
+		return 0, fmt.Errorf("tail must be a non-negative integer")
+	}
+	return tail, nil
+}
+
+func tailLog(data []byte, lines int) []byte {
+	if lines < 0 {
+		return data
+	}
+	if lines == 0 || len(data) == 0 {
+		return nil
+	}
+
+	trailingNewline := data[len(data)-1] == '\n'
+	trimmed := data
+	if trailingNewline {
+		trimmed = data[:len(data)-1]
+	}
+	parts := bytes.Split(trimmed, []byte{'\n'})
+	if len(parts) > lines {
+		parts = parts[len(parts)-lines:]
+	}
+	out := bytes.Join(parts, []byte{'\n'})
+	if trailingNewline {
+		out = append(out, '\n')
+	}
+	return out
+}
+
 func normalizeRunStatus(windowStatus, resultStatus string) string {
 	if resultStatus == orbitald.WindowFailed || windowStatus == orbitald.WindowFailed {
 		return "error"
@@ -1371,6 +1573,20 @@ func formatOptionalTime(value *time.Time) string {
 		return "-"
 	}
 	return value.UTC().Format(time.RFC3339)
+}
+
+func printOptional(w io.Writer, label, value string) {
+	if value == "" {
+		return
+	}
+	fmt.Fprintf(w, "%s: %s\n", label, value)
+}
+
+func printOptionalTime(w io.Writer, label string, value *time.Time) {
+	if value == nil || value.IsZero() {
+		return
+	}
+	fmt.Fprintf(w, "%s: %s\n", label, value.UTC().Format(time.RFC3339))
 }
 
 func firstNonEmpty(values ...string) string {

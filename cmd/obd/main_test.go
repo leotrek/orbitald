@@ -1,6 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,11 +105,120 @@ func TestBuildRunInfosIncludesOrphanResults(t *testing.T) {
 	}
 }
 
+func TestRunInfoFindsByResultID(t *testing.T) {
+	start := mustTime(t, "2026-09-05T12:00:00Z")
+	finish := mustTime(t, "2026-09-05T12:01:00Z")
+	state := orbitald.StateSnapshot{
+		Results: []orbitald.ResultRecord{
+			{
+				ID:         "result-ok",
+				RunID:      "run-ok",
+				Function:   "capture",
+				WindowID:   "window-ok",
+				Status:     orbitald.WindowSuccess,
+				ExitCode:   0,
+				StartedAt:  start,
+				FinishedAt: finish,
+				LogPath:    "/var/lib/orbitald/runs/run-ok/run.log",
+			},
+		},
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cfg := testCLI(t, state, orbitald.DefaultStateDir, &out, &errOut)
+	if err := cfg.runInfo([]string{"result-ok"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "run: run-ok") || !strings.Contains(out.String(), "result: result-ok") {
+		t.Fatalf("unexpected output:\n%s", out.String())
+	}
+}
+
+func TestRunLogsReadsRelativePathAndTailsAfterTarget(t *testing.T) {
+	start := mustTime(t, "2026-09-05T12:00:00Z")
+	finish := mustTime(t, "2026-09-05T12:01:00Z")
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "runs", "run-ok", "run.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state := orbitald.StateSnapshot{
+		Results: []orbitald.ResultRecord{
+			{
+				ID:         "result-ok",
+				RunID:      "run-ok",
+				Function:   "capture",
+				WindowID:   "window-ok",
+				Status:     orbitald.WindowSuccess,
+				ExitCode:   0,
+				StartedAt:  start,
+				FinishedAt: finish,
+				LogPath:    "runs/run-ok/run.log",
+			},
+		},
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cfg := testCLI(t, state, dir, &out, &errOut)
+	if err := cfg.runCmd([]string{"logs", "run-ok", "--tail", "2"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "two\nthree\n" {
+		t.Fatalf("unexpected logs %q", got)
+	}
+}
+
 func assertStatus(t *testing.T, statuses map[string]string, id, want string) {
 	t.Helper()
 	if got := statuses[id]; got != want {
 		t.Fatalf("expected %s to be %q, got %q", id, want, got)
 	}
+}
+
+func testCLI(t *testing.T, state orbitald.StateSnapshot, stateDir string, out, errOut io.Writer) cli {
+	t.Helper()
+	return cli{
+		endpoint: "http://orbitald.test",
+		stateDir: stateDir,
+		out:      out,
+		err:      errOut,
+		httpClient: &http.Client{
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path != "/v1/state" {
+					return &http.Response{
+						StatusCode: http.StatusNotFound,
+						Status:     "404 Not Found",
+						Body:       io.NopCloser(strings.NewReader("not found")),
+						Header:     make(http.Header),
+						Request:    r,
+					}, nil
+				}
+				data, err := json.Marshal(state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Body:       io.NopCloser(bytes.NewReader(data)),
+					Header:     make(http.Header),
+					Request:    r,
+				}, nil
+			}),
+		},
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }
 
 func mustTime(t *testing.T, value string) time.Time {
