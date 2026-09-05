@@ -251,18 +251,28 @@ validate_state_dir() {
 	fi
 }
 
+set_state_path_owner_mode() {
+	path=$1
+	mode=$2
+
+	[ -e "$path" ] || return
+	chown "$ORBITALD_USER:$ORBITALD_GROUP" "$path" || die "could not set owner on $path to $ORBITALD_USER:$ORBITALD_GROUP"
+	chmod "$mode" "$path" || die "could not set mode $mode on $path"
+}
+
 install_state_dir() {
 	validate_state_dir
 
 	log "Creating state directory $ORBITALD_STATE_DIR"
-	"$INSTALL" -d -m 0750 -o "$ORBITALD_USER" -g "$ORBITALD_GROUP" "$ORBITALD_STATE_DIR"
-	"$INSTALL" -d -m 0750 -o "$ORBITALD_USER" -g "$ORBITALD_GROUP" "$ORBITALD_STATE_DIR/runs"
-	"$INSTALL" -d -m 0700 -o "$ORBITALD_USER" -g "$ORBITALD_GROUP" "$ORBITALD_STATE_DIR/.docker"
+	"$INSTALL" -d -m 0750 -o "$ORBITALD_USER" -g "$ORBITALD_GROUP" "$ORBITALD_STATE_DIR" || die "could not create $ORBITALD_STATE_DIR"
+	"$INSTALL" -d -m 0750 -o "$ORBITALD_USER" -g "$ORBITALD_GROUP" "$ORBITALD_STATE_DIR/runs" || die "could not create $ORBITALD_STATE_DIR/runs"
+	"$INSTALL" -d -m 0700 -o "$ORBITALD_USER" -g "$ORBITALD_GROUP" "$ORBITALD_STATE_DIR/.docker" || die "could not create $ORBITALD_STATE_DIR/.docker"
 
-	log "Ensuring state directory ownership for $ORBITALD_USER:$ORBITALD_GROUP"
-	chown -R "$ORBITALD_USER:$ORBITALD_GROUP" "$ORBITALD_STATE_DIR"
-	chmod 0750 "$ORBITALD_STATE_DIR" "$ORBITALD_STATE_DIR/runs"
-	chmod 0700 "$ORBITALD_STATE_DIR/.docker"
+	log "Ensuring required state paths are owned by $ORBITALD_USER:$ORBITALD_GROUP"
+	set_state_path_owner_mode "$ORBITALD_STATE_DIR" 0750
+	set_state_path_owner_mode "$ORBITALD_STATE_DIR/runs" 0750
+	set_state_path_owner_mode "$ORBITALD_STATE_DIR/.docker" 0700
+	set_state_path_owner_mode "$ORBITALD_STATE_DIR/state.json" 0640
 }
 
 install_containerd_dropin() {
