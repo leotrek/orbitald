@@ -47,7 +47,6 @@ By default it configures the systemd service to run as `root`:
 
 - state directory `/var/lib/orbitald`, owned by `root:root` with mode `0750`
 - `User=root` and `Group=root` in the generated systemd unit
-- cleanup of the obsolete containerd socket permission drop-in from older installs
 
 This matches the default rootful containerd deployment model and avoids mount
 and snapshotter permission failures during function startup.

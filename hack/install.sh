@@ -134,45 +134,10 @@ install_files() {
 	rm -f "$tmp_unit"
 }
 
-validate_state_dir() {
-	case "$ORBITALD_STATE_DIR" in
-		/*) ;;
-		*) die "ORBITALD_STATE_DIR must be an absolute path: $ORBITALD_STATE_DIR" ;;
-	esac
-
-	case "$ORBITALD_STATE_DIR" in
-		/|/home|/private|/private/tmp|/srv|/tmp|/usr|/usr/local|/var|/var/lib)
-			die "refusing to manage unsafe ORBITALD_STATE_DIR '$ORBITALD_STATE_DIR'"
-			;;
-	esac
-
-	if [ -L "$ORBITALD_STATE_DIR" ]; then
-		die "refusing to manage symlinked ORBITALD_STATE_DIR '$ORBITALD_STATE_DIR'"
-	fi
-}
-
-set_state_path_owner_mode() {
-	path=$1
-	mode=$2
-
-	[ -e "$path" ] || return
-	chown root:root "$path" || die "could not set owner on $path to root:root"
-	chmod "$mode" "$path" || die "could not set mode $mode on $path"
-}
-
 install_state_dir() {
-	validate_state_dir
-
 	log "Creating state directory $ORBITALD_STATE_DIR"
 	"$INSTALL" -d -m 0750 -o root -g root "$ORBITALD_STATE_DIR" || die "could not create $ORBITALD_STATE_DIR"
 	"$INSTALL" -d -m 0750 -o root -g root "$ORBITALD_STATE_DIR/runs" || die "could not create $ORBITALD_STATE_DIR/runs"
-	"$INSTALL" -d -m 0700 -o root -g root "$ORBITALD_STATE_DIR/.docker" || die "could not create $ORBITALD_STATE_DIR/.docker"
-
-	log "Ensuring required state paths are owned by root:root"
-	set_state_path_owner_mode "$ORBITALD_STATE_DIR" 0750
-	set_state_path_owner_mode "$ORBITALD_STATE_DIR/runs" 0750
-	set_state_path_owner_mode "$ORBITALD_STATE_DIR/.docker" 0700
-	set_state_path_owner_mode "$ORBITALD_STATE_DIR/state.json" 0640
 }
 
 reload_systemd() {
@@ -195,22 +160,11 @@ start_containerd() {
 	fi
 }
 
-remove_legacy_containerd_dropin() {
-	[ -z "$DESTDIR" ] || return
-
-	dropin_file=/etc/systemd/system/containerd.service.d/orbitald-socket-permissions.conf
-	if [ -e "$dropin_file" ] || [ -L "$dropin_file" ]; then
-		log "Removing obsolete containerd socket permission drop-in at $dropin_file"
-		rm -f "$dropin_file"
-	fi
-	rmdir /etc/systemd/system/containerd.service.d 2>/dev/null || true
-}
-
 main() {
 	log "Starting orbitald install"
 
 	if [ -n "$DESTDIR" ]; then
-		log "DESTDIR is set; staging files only and skipping host dependency/user setup"
+		log "DESTDIR is set; staging files only and skipping host setup"
 		install_files
 		log "orbitald files staged under $DESTDIR"
 		return
@@ -221,7 +175,6 @@ main() {
 	ensure_containerd_installed
 	install_files
 	install_state_dir
-	remove_legacy_containerd_dropin
 	reload_systemd
 	start_containerd
 
