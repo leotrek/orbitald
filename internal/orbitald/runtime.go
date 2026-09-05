@@ -297,15 +297,22 @@ func pullImage(ctx context.Context, client *containerd.Client, resolver remotes.
 func ensureUnpacked(ctx context.Context, image containerd.Image, snapshotter string) (containerd.Image, error) {
 	unpacked, err := image.IsUnpacked(ctx, snapshotter)
 	if err != nil {
-		return nil, err
+		return nil, wrapSnapshotterError("check image unpack", snapshotter, err)
 	}
 	if unpacked {
 		return image, nil
 	}
 	if err := image.Unpack(ctx, snapshotter); err != nil {
-		return nil, err
+		return nil, wrapSnapshotterError("unpack image", snapshotter, err)
 	}
 	return image, nil
+}
+
+func wrapSnapshotterError(action, snapshotter string, err error) error {
+	if strings.Contains(err.Error(), "operation not permitted") {
+		return fmt.Errorf("%s with snapshotter %q: %w; orbitald needs mount privileges for this containerd snapshotter", action, snapshotter, err)
+	}
+	return fmt.Errorf("%s with snapshotter %q: %w", action, snapshotter, err)
 }
 
 func dockerResolver(dockerConfigDir string) (remotes.Resolver, error) {

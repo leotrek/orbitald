@@ -50,6 +50,10 @@ By default it configures the existing user that invoked `sudo`:
 - `SupplementaryGroups=containerd` in the generated systemd unit
 - a systemd drop-in that keeps `/run/containerd/containerd.sock` group-owned by `containerd` with mode `0660`
 
+The containerd runtime/snapshotter still needs to be able to perform mount
+operations for the selected snapshotter. If the host or containerd deployment
+blocks those mounts, function runs will fail during task creation.
+
 Useful overrides:
 
 ```bash
@@ -59,8 +63,23 @@ sudo make install-system \
   ORBITALD_USER=myuser \
   ORBITALD_GROUP=myuser \
   ORBITALD_STATE_DIR=/var/lib/orbitald \
+  ORBITALD_SNAPSHOTTER=overlayfs \
   CONTAINERD_GROUP=containerd \
   CONTAINERD_SOCK=/run/containerd/containerd.sock
+```
+
+For a rootless containerd deployment, point `orbitald` at the user's containerd
+socket and set the snapshotter to one supported by that rootless containerd
+instance:
+
+```bash
+sudo make install-system \
+  ORBITALD_USER=myuser \
+  ORBITALD_GROUP=myuser \
+  CONTAINERD_SOCK=/run/user/1000/containerd/containerd.sock \
+  ORBITALD_SNAPSHOTTER=fuse-overlayfs \
+  CONFIGURE_CONTAINERD_SOCKET_PERMS=0 \
+  START_CONTAINERD=0
 ```
 
 Set `DESTDIR` to stage files for packaging without creating users, installing dependencies, or touching systemd:

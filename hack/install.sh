@@ -11,6 +11,7 @@ INSTALL_DEPS=${INSTALL_DEPS:-auto}
 ORBITALD_USER=${ORBITALD_USER:-}
 ORBITALD_GROUP=${ORBITALD_GROUP:-}
 ORBITALD_STATE_DIR=${ORBITALD_STATE_DIR:-/var/lib/orbitald}
+ORBITALD_SNAPSHOTTER=${ORBITALD_SNAPSHOTTER:-overlayfs}
 CONTAINERD_SOCK=${CONTAINERD_SOCK:-/run/containerd/containerd.sock}
 CONTAINERD_GROUP=${CONTAINERD_GROUP:-containerd}
 CONFIGURE_CONTAINERD_SOCKET_PERMS=${CONFIGURE_CONTAINERD_SOCKET_PERMS:-1}
@@ -187,8 +188,10 @@ install_files() {
 	require_file "$SERVICE_SOURCE"
 	unit_bindir=$(printf '%s\n' "$BINDIR" | sed 's/[&#]/\\&/g')
 	unit_state_dir=$(printf '%s\n' "$ORBITALD_STATE_DIR" | sed 's/[&#]/\\&/g')
+	unit_snapshotter=$(printf '%s\n' "$ORBITALD_SNAPSHOTTER" | sed 's/[&#]/\\&/g')
 	unit_user=$(printf '%s\n' "$ORBITALD_USER" | sed 's/[&#]/\\&/g')
 	unit_group=$(printf '%s\n' "$ORBITALD_GROUP" | sed 's/[&#]/\\&/g')
+	unit_containerd_sock=$(printf '%s\n' "$CONTAINERD_SOCK" | sed 's/[&#]/\\&/g')
 	unit_containerd_group=$(printf '%s\n' "$CONTAINERD_GROUP" | sed 's/[&#]/\\&/g')
 
 	log "Installing orbitald binary to ${DESTDIR}${BINDIR}/orbitald"
@@ -205,6 +208,8 @@ install_files() {
 	sed \
 		-e "s#@BINDIR@#${unit_bindir}#g" \
 		-e "s#@ORBITALD_STATE_DIR@#${unit_state_dir}#g" \
+		-e "s#@ORBITALD_SNAPSHOTTER@#${unit_snapshotter}#g" \
+		-e "s#@CONTAINERD_SOCK@#${unit_containerd_sock}#g" \
 		-e "s#@CONTAINERD_GROUP@#${unit_containerd_group}#g" \
 		-e "s#/usr/local/bin/orbitald#${unit_bindir}/orbitald#g" \
 		-e "s#/var/lib/orbitald#${unit_state_dir}#g" \

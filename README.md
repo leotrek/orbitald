@@ -160,6 +160,11 @@ For a node deployment, run `orbitald` under an existing non-root user with:
 - write access to the configured state directory
 - access to the `containerd` socket, usually `/run/containerd/containerd.sock`
 - optional registry auth under `<state-dir>/.docker` or `-docker-config-dir` when you need to pull private images
+- a containerd runtime/snapshotter setup that can perform the required mount operations
+
+Set `ORBITALD_SNAPSHOTTER` during install when the target containerd instance
+does not use `overlayfs`, such as rootless containerd setups using
+`fuse-overlayfs`.
 
 See [docs/operations.md](docs/operations.md) for the install and systemd setup.
 
