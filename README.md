@@ -131,8 +131,34 @@ go build ./...
 ## Run
 
 ```bash
-sudo ./orbitald -listen :8080 -state-dir /var/lib/orbitald
+./bin/orbitald -listen :8080 -state-dir ./var/orbitald
 ```
+
+## CLI
+
+Builds also produce `obd`, a basic operator CLI:
+
+```bash
+obd version
+obd status
+obd fn status
+obd fn info capture
+obd fn start capture --payload '{"camera":"nadir"}'
+obd fn stop capture
+obd container status
+obd container info <run-id>
+obd container stop <run-id>
+```
+
+`fn` commands use the `orbitald` HTTP API. `container` status/info/stop commands inspect live containerd containers in the `orbitald` namespace.
+
+For a node deployment, run `orbitald` under an existing non-root user with:
+
+- write access to the configured state directory
+- access to the `containerd` socket, usually `/run/containerd/containerd.sock`
+- optional registry auth under `<state-dir>/.docker` or `-docker-config-dir` when you need to pull private images
+
+See [docs/operations.md](docs/operations.md) for the install and systemd setup.
 
 ## Docs
 

@@ -4,10 +4,16 @@ After=containerd.service
 Requires=containerd.service
 
 [Service]
-ExecStart=/usr/local/bin/orbitald -listen :8080 -state-dir /var/lib/orbitald
+User=@ORBITALD_USER@
+Group=@ORBITALD_GROUP@
+SupplementaryGroups=@CONTAINERD_GROUP@
+StateDirectory=orbitald
+StateDirectoryMode=0750
+ExecStart=@BINDIR@/orbitald -listen :8080 -state-dir @ORBITALD_STATE_DIR@
 Restart=on-failure
 RestartSec=5s
-WorkingDirectory=/var/lib/orbitald
+WorkingDirectory=@ORBITALD_STATE_DIR@
+NoNewPrivileges=yes
 
 [Install]
 WantedBy=multi-user.target

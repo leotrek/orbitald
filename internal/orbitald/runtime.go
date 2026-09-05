@@ -25,19 +25,19 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-const dockerConfigDir = "/var/lib/orbitald/.docker"
-
 type Executor struct {
-	sock        string
-	stateDir    string
-	snapshotter string
+	sock            string
+	stateDir        string
+	dockerConfigDir string
+	snapshotter     string
 }
 
-func NewExecutor(sock, stateDir, snapshotter string) *Executor {
+func NewExecutor(sock, stateDir, dockerConfigDir, snapshotter string) *Executor {
 	return &Executor{
-		sock:        sock,
-		stateDir:    stateDir,
-		snapshotter: snapshotter,
+		sock:            sock,
+		stateDir:        stateDir,
+		dockerConfigDir: dockerConfigDir,
+		snapshotter:     snapshotter,
 	}
 }
 
@@ -54,7 +54,7 @@ func (e *Executor) EnsureImage(ctx context.Context, imageRef string) error {
 		return err
 	}
 
-	_, err = ensureImagePresent(ctx, client, imageName, e.snapshotter)
+	_, err = ensureImagePresent(ctx, client, imageName, e.snapshotter, e.dockerConfigDir)
 	return err
 }
 
@@ -254,8 +254,8 @@ func (e *Executor) Run(ctx context.Context, fn FunctionSpec, window WindowRecord
 	return result, errorsFrom(result.Error)
 }
 
-func ensureImagePresent(ctx context.Context, client *containerd.Client, imageName, snapshotter string) (containerd.Image, error) {
-	resolver, err := dockerResolver()
+func ensureImagePresent(ctx context.Context, client *containerd.Client, imageName, snapshotter, dockerConfigDir string) (containerd.Image, error) {
+	resolver, err := dockerResolver(dockerConfigDir)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +308,7 @@ func ensureUnpacked(ctx context.Context, image containerd.Image, snapshotter str
 	return image, nil
 }
 
-func dockerResolver() (remotes.Resolver, error) {
+func dockerResolver(dockerConfigDir string) (remotes.Resolver, error) {
 	configPath := filepath.Join(dockerConfigDir, config.ConfigFileName)
 	if _, err := os.Stat(configPath); err != nil {
 		if errorsIsNotExist(err) {

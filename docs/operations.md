@@ -28,15 +28,82 @@ make dist
 - a writable state directory
 - required function images already present locally or reachable during contact
 
-Example:
+Install the binary, systemd unit, service account, state directory, and host dependencies:
 
 ```bash
-sudo /usr/local/bin/orbitald -listen :8080 -state-dir /var/lib/orbitald
+make build
+sudo make install-system PREFIX=/usr/local
 ```
 
-Systemd unit:
+The install places:
+
+- `orbitald` in `BINDIR`, default `/usr/local/bin`
+- `obd` in `CLIBINDIR`, defaulting to `BINDIR`
+- `orbitald.service` in `UNITDIR`, default `/usr/local/lib/systemd/system`
+
+The install script logs each step and will install `containerd` when it is missing on hosts with `apt-get`, `dnf`, `yum`, `zypper`, `pacman`, or `apk`. Set `INSTALL_DEPS=0` to skip dependency installation.
+
+By default it configures the existing user that invoked `sudo`:
+
+- state directory `/var/lib/orbitald`, owned by that user and its primary group with mode `0750`
+- group `containerd` if missing, then adds the user to it
+- `SupplementaryGroups=containerd` in the generated systemd unit
+- a systemd drop-in that keeps `/run/containerd/containerd.sock` group-owned by `containerd` with mode `0660`
+
+Useful overrides:
+
+```bash
+sudo make install-system \
+  PREFIX=/usr/local \
+  CLIBINDIR=/usr/local/bin \
+  ORBITALD_USER=myuser \
+  ORBITALD_GROUP=myuser \
+  ORBITALD_STATE_DIR=/var/lib/orbitald \
+  CONTAINERD_GROUP=containerd \
+  CONTAINERD_SOCK=/run/containerd/containerd.sock
+```
+
+Set `DESTDIR` to stage files for packaging without creating users, installing dependencies, or touching systemd:
+
+```bash
+make install DESTDIR=/tmp/orbitald-package-root
+```
+
+Then enable the service with `sudo systemctl enable --now orbitald`.
+
+The checked-in systemd unit is a template. The install script rewrites `User=`, `Group=`, `SupplementaryGroups=`, `ExecStart=`, and `WorkingDirectory=` before installing it.
 
 - [hack/orbitald.service](../hack/orbitald.service)
+
+## CLI
+
+Basic system commands:
+
+```bash
+obd version
+obd status
+obd help
+```
+
+Function commands:
+
+```bash
+obd fn status
+obd fn info capture
+obd fn start capture --payload '{"camera":"nadir"}'
+obd fn start capture --image ghcr.io/acme/capture:latest
+obd fn stop capture
+```
+
+Container runtime commands:
+
+```bash
+obd container status
+obd container info <run-id>
+obd container stop <run-id>
+```
+
+Use `--addr` when `orbitald` is listening somewhere other than `http://127.0.0.1:8080`. Use `--containerd-sock` when the socket is not `/run/containerd/containerd.sock`.
 
 ## Contact window workflow
 

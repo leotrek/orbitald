@@ -30,13 +30,14 @@ const (
 )
 
 type Config struct {
-	ListenAddr     string
-	StateDir       string
-	ContainerdSock string
-	Snapshotter    string
-	PollEvery      time.Duration
-	MaxConcurrent  int
-	MaxLogBytes    int
+	ListenAddr      string
+	StateDir        string
+	ContainerdSock  string
+	DockerConfigDir string
+	Snapshotter     string
+	PollEvery       time.Duration
+	MaxConcurrent   int
+	MaxLogBytes     int
 }
 
 type FunctionSpec struct {

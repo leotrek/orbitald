@@ -29,6 +29,7 @@ func ConfigFromFlags() Config {
 	flag.StringVar(&cfg.ListenAddr, "listen", DefaultListenAddr, "HTTP listen address")
 	flag.StringVar(&cfg.StateDir, "state-dir", DefaultStateDir, "state directory")
 	flag.StringVar(&cfg.ContainerdSock, "containerd-sock", "/run/containerd/containerd.sock", "containerd socket")
+	flag.StringVar(&cfg.DockerConfigDir, "docker-config-dir", "", "Docker registry auth directory (defaults to <state-dir>/.docker)")
 	flag.StringVar(&cfg.Snapshotter, "snapshotter", DefaultSnapshotter, "containerd snapshotter")
 	flag.DurationVar(&cfg.PollEvery, "poll-every", DefaultPollEvery, "window polling interval")
 	flag.IntVar(&cfg.MaxConcurrent, "max-concurrent", 1, "maximum concurrent function runs")
@@ -66,6 +67,14 @@ func New(cfg Config) (*App, error) {
 		return nil, err
 	}
 	cfg.StateDir = absStateDir
+	if cfg.DockerConfigDir == "" {
+		cfg.DockerConfigDir = filepath.Join(cfg.StateDir, ".docker")
+	} else {
+		cfg.DockerConfigDir, err = filepath.Abs(cfg.DockerConfigDir)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	store, err := OpenStore(cfg.StateDir)
 	if err != nil {
@@ -75,7 +84,7 @@ func New(cfg Config) (*App, error) {
 	app := &App{
 		cfg:      cfg,
 		store:    store,
-		executor: NewExecutor(cfg.ContainerdSock, cfg.StateDir, cfg.Snapshotter),
+		executor: NewExecutor(cfg.ContainerdSock, cfg.StateDir, cfg.DockerConfigDir, cfg.Snapshotter),
 		slots:    make(chan struct{}, cfg.MaxConcurrent),
 	}
 	app.server = &http.Server{
