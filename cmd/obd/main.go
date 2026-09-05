@@ -99,6 +99,8 @@ func run(args []string, out, errOut io.Writer) int {
 		err = cfg.system(commandArgs)
 	case "fn", "function":
 		err = cfg.fn(commandArgs)
+	case "instance", "instances", "run", "runs":
+		err = cfg.instance(commandArgs)
 	case "container", "containers":
 		err = cfg.container(commandArgs)
 	default:
@@ -117,10 +119,12 @@ func printUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   obd [global flags] version
   obd [global flags] status
+  obd [global flags] fn list
   obd [global flags] fn info NAME
   obd [global flags] fn status [NAME]
   obd [global flags] fn start NAME [flags]
   obd [global flags] fn stop NAME|WINDOW_ID|RUN_ID
+  obd [global flags] instance list [FUNCTION]
   obd [global flags] container info ID
   obd [global flags] container status [ID]
   obd [global flags] container start NAME [flags]
@@ -135,7 +139,9 @@ Global flags:
 Examples:
   obd version
   obd status
+  obd fn list
   obd fn status capture
+  obd instances
   obd fn start capture --payload '{"camera":"nadir"}'
   obd fn start capture --image ghcr.io/acme/capture:latest
   obd fn stop capture
@@ -151,8 +157,10 @@ func (c *cli) help(args []string) error {
 	switch args[0] {
 	case "fn", "function":
 		fmt.Fprint(c.out, `Usage:
+  obd fn list
   obd fn info NAME
   obd fn status [NAME]
+  obd fn instances [NAME]
   obd fn start NAME [flags]
   obd fn stop NAME|WINDOW_ID|RUN_ID
 
@@ -166,6 +174,13 @@ Function start flags:
   --user string        container user when --image is provided
   --arg string         container command arg when --image is provided; repeatable
   --env KEY=VALUE      environment variable when --image is provided; repeatable
+`)
+	case "instance", "instances", "run", "runs":
+		fmt.Fprint(c.out, `Usage:
+  obd instance list [FUNCTION]
+  obd instances [FUNCTION]
+
+Instances are read from the orbitald snapshot. Completed successful runs are shown as stopped, and failed runs are shown as error.
 `)
 	case "container", "containers":
 		fmt.Fprint(c.out, `Usage:
@@ -316,10 +331,14 @@ func (c *cli) fn(args []string) error {
 	}
 
 	switch args[0] {
+	case "list", "ls":
+		return c.fnList(args[1:])
 	case "info":
 		return c.fnInfo(args[1:])
 	case "status":
 		return c.fnStatus(args[1:])
+	case "instances", "runs":
+		return c.instanceList(args[1:])
 	case "start":
 		return c.fnStart(args[1:])
 	case "stop":
@@ -329,6 +348,41 @@ func (c *cli) fn(args []string) error {
 	default:
 		return fmt.Errorf("unknown fn command %q", args[0])
 	}
+}
+
+func (c *cli) fnList(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: obd fn list")
+	}
+
+	state, err := c.getState()
+	if err != nil {
+		return err
+	}
+
+	functions := sortedFunctions(state.Functions)
+	if c.jsonOutput {
+		return writePrettyJSON(c.out, functions)
+	}
+
+	fmt.Fprintf(c.out, "%-24s %-72s %-10s %-10s %-8s %s\n", "NAME", "IMAGE", "TIMEOUT", "MEMORY", "ENV", "COMMAND")
+	for _, fn := range functions {
+		timeout := fn.Timeout
+		if timeout == "" {
+			timeout = orbitald.DefaultRunTimeout.String()
+		}
+		fmt.Fprintf(
+			c.out,
+			"%-24s %-72s %-10s %-10s %-8d %s\n",
+			fn.Name,
+			shorten(fn.Image, 72),
+			timeout,
+			valueOrDash(fn.MemoryLimit),
+			len(fn.Env),
+			shorten(strings.Join(fn.Command, " "), 48),
+		)
+	}
+	return nil
 }
 
 func (c *cli) fnInfo(args []string) error {
@@ -419,6 +473,68 @@ func (c *cli) fnStatus(args []string) error {
 			summary.Expired,
 			summary.Results,
 			shorten(summary.Image, 64),
+		)
+	}
+	return nil
+}
+
+func (c *cli) instance(args []string) error {
+	if len(args) == 0 {
+		return c.instanceList(nil)
+	}
+
+	switch args[0] {
+	case "list", "ls", "status":
+		return c.instanceList(args[1:])
+	case "help":
+		return c.help([]string{"instance"})
+	default:
+		return c.instanceList(args)
+	}
+}
+
+func (c *cli) instanceList(args []string) error {
+	if len(args) > 1 {
+		return fmt.Errorf("usage: obd instance list [FUNCTION]")
+	}
+	var function string
+	if len(args) == 1 {
+		function = args[0]
+	}
+
+	state, err := c.getState()
+	if err != nil {
+		return err
+	}
+
+	instances := buildInstanceInfos(state, function)
+	if len(instances) == 0 && function != "" {
+		if _, ok := findFunction(state, function); !ok {
+			return fmt.Errorf("function %q not found", function)
+		}
+	}
+
+	if c.jsonOutput {
+		return writePrettyJSON(c.out, instances)
+	}
+
+	fmt.Fprintf(c.out, "%-32s %-20s %-9s %-28s %-28s %-5s %-20s %s\n", "INSTANCE", "FUNCTION", "STATUS", "WINDOW", "RESULT", "EXIT", "STARTED", "ERROR")
+	for _, instance := range instances {
+		exitCode := "-"
+		if instance.ExitCode != nil {
+			exitCode = fmt.Sprintf("%d", *instance.ExitCode)
+		}
+		fmt.Fprintf(
+			c.out,
+			"%-32s %-20s %-9s %-28s %-28s %-5s %-20s %s\n",
+			shorten(instance.ID, 32),
+			shorten(instance.Function, 20),
+			instance.Status,
+			shorten(instance.WindowID, 28),
+			shorten(valueOrDash(instance.ResultID), 28),
+			exitCode,
+			formatOptionalTime(instance.StartedAt),
+			shorten(valueOrDash(instance.Error), 72),
 		)
 	}
 	return nil
@@ -803,6 +919,160 @@ type functionSummary struct {
 	Results int    `json:"results"`
 }
 
+type instanceInfo struct {
+	ID                string     `json:"id"`
+	Function          string     `json:"function"`
+	Status            string     `json:"status"`
+	WindowID          string     `json:"window_id,omitempty"`
+	WindowStatus      string     `json:"window_status,omitempty"`
+	RunID             string     `json:"run_id,omitempty"`
+	ResultID          string     `json:"result_id,omitempty"`
+	ResultStatus      string     `json:"result_status,omitempty"`
+	ExitCode          *uint32    `json:"exit_code,omitempty"`
+	Area              string     `json:"area,omitempty"`
+	StartAt           *time.Time `json:"start_at,omitempty"`
+	EndAt             *time.Time `json:"end_at,omitempty"`
+	TriggeredAt       *time.Time `json:"triggered_at,omitempty"`
+	StartedAt         *time.Time `json:"started_at,omitempty"`
+	FinishedAt        *time.Time `json:"finished_at,omitempty"`
+	PayloadPath       string     `json:"payload_path,omitempty"`
+	OutputDir         string     `json:"output_dir,omitempty"`
+	LogPath           string     `json:"log_path,omitempty"`
+	UploadConfirmedAt *time.Time `json:"upload_confirmed_at,omitempty"`
+	Error             string     `json:"error,omitempty"`
+}
+
+func buildInstanceInfos(state orbitald.StateSnapshot, onlyFunction string) []instanceInfo {
+	resultsByWindow := map[string]orbitald.ResultRecord{}
+	resultsByRun := map[string]orbitald.ResultRecord{}
+	usedResults := map[string]bool{}
+	for _, result := range state.Results {
+		if onlyFunction != "" && result.Function != onlyFunction {
+			continue
+		}
+		if result.WindowID != "" {
+			if existing, ok := resultsByWindow[result.WindowID]; !ok || result.FinishedAt.After(existing.FinishedAt) {
+				resultsByWindow[result.WindowID] = result
+			}
+		}
+		if result.RunID != "" {
+			if existing, ok := resultsByRun[result.RunID]; !ok || result.FinishedAt.After(existing.FinishedAt) {
+				resultsByRun[result.RunID] = result
+			}
+		}
+	}
+
+	instances := make([]instanceInfo, 0, len(state.Windows)+len(state.Results))
+	for _, window := range state.Windows {
+		if onlyFunction != "" && window.Function != onlyFunction {
+			continue
+		}
+		result, hasResult := resultsByWindow[window.ID]
+		if !hasResult && window.RunID != "" {
+			result, hasResult = resultsByRun[window.RunID]
+		}
+		if hasResult {
+			usedResults[result.ID] = true
+		}
+		instances = append(instances, instanceFromWindow(window, result, hasResult))
+	}
+
+	for _, result := range state.Results {
+		if onlyFunction != "" && result.Function != onlyFunction {
+			continue
+		}
+		if usedResults[result.ID] {
+			continue
+		}
+		instances = append(instances, instanceFromResult(result))
+	}
+
+	sort.Slice(instances, func(i, j int) bool {
+		left := effectiveInstanceTime(instances[i])
+		right := effectiveInstanceTime(instances[j])
+		if left.Equal(right) {
+			return instances[i].ID < instances[j].ID
+		}
+		return left.After(right)
+	})
+	return instances
+}
+
+func instanceFromWindow(window orbitald.WindowRecord, result orbitald.ResultRecord, hasResult bool) instanceInfo {
+	info := instanceInfo{
+		ID:           firstNonEmpty(window.RunID, window.ID),
+		Function:     window.Function,
+		Status:       normalizeInstanceStatus(window.Status, ""),
+		WindowID:     window.ID,
+		WindowStatus: window.Status,
+		RunID:        window.RunID,
+		Area:         window.Area,
+		StartAt:      timePtr(window.StartAt),
+		EndAt:        timePtr(window.EndAt),
+		TriggeredAt:  window.TriggeredAt,
+		FinishedAt:   window.FinishedAt,
+		Error:        window.Error,
+	}
+	if hasResult {
+		mergeResultIntoInstance(&info, result)
+	}
+	return info
+}
+
+func instanceFromResult(result orbitald.ResultRecord) instanceInfo {
+	info := instanceInfo{
+		ID:       firstNonEmpty(result.RunID, result.ID),
+		Function: result.Function,
+		Status:   normalizeInstanceStatus("", result.Status),
+		WindowID: result.WindowID,
+		RunID:    result.RunID,
+	}
+	mergeResultIntoInstance(&info, result)
+	return info
+}
+
+func mergeResultIntoInstance(info *instanceInfo, result orbitald.ResultRecord) {
+	exitCode := result.ExitCode
+	info.ResultID = result.ID
+	info.ResultStatus = result.Status
+	info.ExitCode = &exitCode
+	info.StartedAt = timePtr(result.StartedAt)
+	info.FinishedAt = timePtr(result.FinishedAt)
+	info.PayloadPath = result.PayloadPath
+	info.OutputDir = result.OutputDir
+	info.LogPath = result.LogPath
+	info.UploadConfirmedAt = result.UploadConfirmedAt
+	if result.Error != "" {
+		info.Error = result.Error
+	}
+	info.Status = normalizeInstanceStatus(info.WindowStatus, result.Status)
+}
+
+func normalizeInstanceStatus(windowStatus, resultStatus string) string {
+	if resultStatus == orbitald.WindowFailed || windowStatus == orbitald.WindowFailed {
+		return "error"
+	}
+	if windowStatus == orbitald.WindowExpired {
+		return "expired"
+	}
+	if windowStatus == orbitald.WindowRunning {
+		return "running"
+	}
+	if windowStatus == orbitald.WindowPending {
+		return "pending"
+	}
+	if resultStatus == orbitald.WindowSuccess || windowStatus == orbitald.WindowSuccess {
+		return "stopped"
+	}
+	if resultStatus != "" {
+		return resultStatus
+	}
+	if windowStatus != "" {
+		return windowStatus
+	}
+	return "unknown"
+}
+
 func buildFunctionSummaries(state orbitald.StateSnapshot, only string) []functionSummary {
 	summaries := map[string]*functionSummary{}
 	for _, fn := range state.Functions {
@@ -865,6 +1135,14 @@ func findFunction(state orbitald.StateSnapshot, name string) (orbitald.FunctionS
 	return orbitald.FunctionSpec{}, false
 }
 
+func sortedFunctions(functions []orbitald.FunctionSpec) []orbitald.FunctionSpec {
+	sorted := append([]orbitald.FunctionSpec(nil), functions...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Name < sorted[j].Name
+	})
+	return sorted
+}
+
 func filterWindows(windows []orbitald.WindowRecord, name string) []orbitald.WindowRecord {
 	filtered := make([]orbitald.WindowRecord, 0, len(windows))
 	for _, window := range windows {
@@ -905,6 +1183,15 @@ func printStateCounts(w io.Writer, state orbitald.StateSnapshot) {
 		counts[orbitald.WindowExpired],
 	)
 	fmt.Fprintf(w, "  results: %d pending_upload=%d\n", len(state.Results), pendingUpload)
+}
+
+func effectiveInstanceTime(info instanceInfo) time.Time {
+	for _, candidate := range []*time.Time{info.StartedAt, info.TriggeredAt, info.StartAt, info.FinishedAt, info.EndAt} {
+		if candidate != nil && !candidate.IsZero() {
+			return *candidate
+		}
+	}
+	return time.Time{}
 }
 
 func (c *cli) getHealth() (healthResponse, error) {
@@ -1040,6 +1327,37 @@ func shorten(value string, max int) string {
 		return value[:max]
 	}
 	return value[:max-3] + "..."
+}
+
+func valueOrDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+func formatOptionalTime(value *time.Time) string {
+	if value == nil || value.IsZero() {
+		return "-"
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return "-"
+}
+
+func timePtr(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	value = value.UTC()
+	return &value
 }
 
 func errString(err error) string {

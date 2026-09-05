@@ -13,6 +13,8 @@ ORBITALD_GROUP ?=
 ORBITALD_STATE_DIR ?= /var/lib/orbitald
 CONTAINERD_SOCK ?= /run/containerd/containerd.sock
 CONTAINERD_GROUP ?= containerd
+REMOVE_CONTAINERD ?= ask
+PURGE_STATE ?= 0
 LDFLAGS := -s -w -X github.com/orbitald/orbitald/internal/orbitald.Version=$(VERSION)
 
 .PHONY: all
@@ -46,6 +48,19 @@ install-system:
 	CONTAINERD_SOCK="$(CONTAINERD_SOCK)" \
 	CONTAINERD_GROUP="$(CONTAINERD_GROUP)" \
 	sh hack/install.sh
+
+.PHONY: uninstall
+uninstall:
+	@DESTDIR="$(DESTDIR)" \
+	PREFIX="$(PREFIX)" \
+	BINDIR="$(BINDIR)" \
+	CLIBINDIR="$(CLIBINDIR)" \
+	UNITDIR="$(UNITDIR)" \
+	ORBITALD_STATE_DIR="$(ORBITALD_STATE_DIR)" \
+	CONTAINERD_GROUP="$(CONTAINERD_GROUP)" \
+	REMOVE_CONTAINERD="$(REMOVE_CONTAINERD)" \
+	PURGE_STATE="$(PURGE_STATE)" \
+	sh hack/uninstall.sh
 
 .PHONY: dist
 dist:

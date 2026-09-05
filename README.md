@@ -141,8 +141,11 @@ Builds also produce `obd`, a basic operator CLI:
 ```bash
 obd version
 obd status
+obd fn list
 obd fn status
 obd fn info capture
+obd instances
+obd instances capture
 obd fn start capture --payload '{"camera":"nadir"}'
 obd fn stop capture
 obd container status
@@ -150,7 +153,7 @@ obd container info <run-id>
 obd container stop <run-id>
 ```
 
-`fn` commands use the `orbitald` HTTP API. `container` status/info/stop commands inspect live containerd containers in the `orbitald` namespace.
+`fn` and `instances` commands use the `orbitald` HTTP API snapshot. `container` status/info/stop commands inspect live containerd containers in the `orbitald` namespace.
 
 For a node deployment, run `orbitald` under an existing non-root user with:
 
@@ -159,6 +162,14 @@ For a node deployment, run `orbitald` under an existing non-root user with:
 - optional registry auth under `<state-dir>/.docker` or `-docker-config-dir` when you need to pull private images
 
 See [docs/operations.md](docs/operations.md) for the install and systemd setup.
+
+Uninstall:
+
+```bash
+sudo make uninstall
+```
+
+The uninstall script asks before removing `containerd` and preserves the state directory unless `PURGE_STATE=1` is set.
 
 ## Docs
 

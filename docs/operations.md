@@ -88,11 +88,21 @@ obd help
 Function commands:
 
 ```bash
+obd fn list
 obd fn status
 obd fn info capture
+obd fn instances capture
 obd fn start capture --payload '{"camera":"nadir"}'
 obd fn start capture --image ghcr.io/acme/capture:latest
 obd fn stop capture
+```
+
+Instance commands:
+
+```bash
+obd instances
+obd instances capture
+obd instance list capture
 ```
 
 Container runtime commands:
@@ -104,6 +114,30 @@ obd container stop <run-id>
 ```
 
 Use `--addr` when `orbitald` is listening somewhere other than `http://127.0.0.1:8080`. Use `--containerd-sock` when the socket is not `/run/containerd/containerd.sock`.
+
+## Uninstall
+
+Remove the service, installed binaries, systemd unit, and orbitald's containerd socket permission drop-in:
+
+```bash
+sudo make uninstall
+```
+
+The uninstall script logs each step and asks before removing the `containerd` package. It preserves `/var/lib/orbitald` by default.
+
+Useful overrides:
+
+```bash
+sudo make uninstall REMOVE_CONTAINERD=1 PURGE_STATE=1
+sudo make uninstall REMOVE_CONTAINERD=0
+sudo make uninstall ORBITALD_STATE_DIR=/srv/orbitald
+```
+
+Set `DESTDIR` to remove staged files only:
+
+```bash
+make uninstall DESTDIR=/tmp/orbitald-package-root
+```
 
 ## Contact window workflow
 
