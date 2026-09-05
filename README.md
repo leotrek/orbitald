@@ -141,19 +141,17 @@ Builds also produce `obd`, a basic operator CLI:
 ```bash
 obd version
 obd status
-obd fn list
-obd fn status
-obd fn info capture
-obd list
-obd list capture
-obd fn start capture --payload '{"camera":"nadir"}'
-obd fn stop capture
-obd container status
-obd container info <run-id>
-obd container stop <run-id>
+obd images
+obd image inspect capture
+obd task list
+obd task list capture
+obd task inspect <task-id>
+obd task logs <task-id>
+obd task start capture --payload '{"camera":"nadir"}'
+obd task stop capture
 ```
 
-`fn` and `list` commands use the `orbitald` HTTP API snapshot. `container` status/info/stop commands inspect live containerd containers in the `orbitald` namespace.
+`images` shows registered runnable function specs. `task list` shows persisted orbitald executions and, when containerd is reachable, live containers in the `orbitald` namespace. Legacy `fn`, `run`, `list`, and `container` aliases are still accepted.
 
 For a node deployment, the systemd install runs `orbitald` as `root` so the
 container runtime can perform the required mount and snapshotter operations.

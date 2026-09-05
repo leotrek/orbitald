@@ -84,33 +84,36 @@ obd status
 obd help
 ```
 
-Function commands:
+Image commands:
 
 ```bash
-obd fn list
-obd fn status
-obd fn info capture
-obd fn start capture --payload '{"camera":"nadir"}'
-obd fn start capture --image ghcr.io/acme/capture:latest
-obd fn stop capture
+obd images
+obd image inspect capture
 ```
 
-List commands:
+Task commands:
 
 ```bash
-obd list
-obd list capture
-obd list runs capture
-obd list functions
+obd task list
+obd task list capture
+obd task inspect <task-id>
+obd task describe <task-id>
+obd task logs <task-id>
+obd task logs <task-id> --tail 100
+obd task start capture --payload '{"camera":"nadir"}'
+obd task start capture --image ghcr.io/acme/capture:latest
+obd task stop capture
 ```
 
-Container runtime commands:
+Low-level container runtime aliases:
 
 ```bash
 obd container status
 obd container info <run-id>
 obd container stop <run-id>
 ```
+
+`task list` includes pending, running, stopped, failed, and expired orbitald executions. When the local containerd socket is reachable, it also includes live containers in the `orbitald` namespace.
 
 Use `--addr` when `orbitald` is listening somewhere other than `http://127.0.0.1:8080`. Use `--containerd-sock` when the socket is not `/run/containerd/containerd.sock`.
 

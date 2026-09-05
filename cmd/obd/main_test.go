@@ -135,6 +135,84 @@ func TestRunInfoFindsByResultID(t *testing.T) {
 	}
 }
 
+func TestImageInspectFindsFunction(t *testing.T) {
+	state := orbitald.StateSnapshot{
+		Functions: []orbitald.FunctionSpec{
+			{Name: "capture", Image: "ghcr.io/acme/capture:latest", Timeout: "2m"},
+		},
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cfg := testCLI(t, state, orbitald.DefaultStateDir, &out, &errOut)
+	if err := cfg.image([]string{"inspect", "capture"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "function: capture") || !strings.Contains(out.String(), "image: ghcr.io/acme/capture:latest") {
+		t.Fatalf("unexpected output:\n%s", out.String())
+	}
+}
+
+func TestTaskDescribeFindsByResultID(t *testing.T) {
+	start := mustTime(t, "2026-09-05T12:00:00Z")
+	finish := mustTime(t, "2026-09-05T12:01:00Z")
+	state := orbitald.StateSnapshot{
+		Functions: []orbitald.FunctionSpec{
+			{Name: "capture", Image: "ghcr.io/acme/capture:latest"},
+		},
+		Results: []orbitald.ResultRecord{
+			{
+				ID:         "result-ok",
+				RunID:      "run-ok",
+				Function:   "capture",
+				WindowID:   "window-ok",
+				Status:     orbitald.WindowSuccess,
+				ExitCode:   0,
+				StartedAt:  start,
+				FinishedAt: finish,
+				LogPath:    "/var/lib/orbitald/runs/run-ok/run.log",
+			},
+		},
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cfg := testCLI(t, state, orbitald.DefaultStateDir, &out, &errOut)
+	if err := cfg.task([]string{"describe", "result-ok"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "task: run-ok") || !strings.Contains(out.String(), "image: ghcr.io/acme/capture:latest") {
+		t.Fatalf("unexpected output:\n%s", out.String())
+	}
+}
+
+func TestMergeContainerInfosIncludesOrphanContainers(t *testing.T) {
+	start := mustTime(t, "2026-09-05T12:00:00Z")
+	instances := []runInfo{
+		{ID: "run-existing", RunID: "run-existing", Function: "capture", Status: "running"},
+	}
+	containers := []containerInfo{
+		{ID: "run-existing", Image: "ghcr.io/acme/capture:latest", TaskStatus: "running", CreatedAt: start},
+		{ID: "orphan-container", Image: "ghcr.io/acme/orphan:latest", TaskStatus: "running", CreatedAt: start.Add(time.Minute)},
+	}
+
+	merged := mergeContainerInfos(instances, containers, "")
+	byID := map[string]runInfo{}
+	for _, item := range merged {
+		byID[item.ID] = item
+	}
+
+	existing := byID["run-existing"]
+	if existing.ContainerID != "run-existing" || existing.Image != "ghcr.io/acme/capture:latest" {
+		t.Fatalf("existing task did not receive container data: %#v", existing)
+	}
+
+	orphan := byID["orphan-container"]
+	if orphan.ContainerID != "orphan-container" || orphan.Status != "running" || orphan.Image != "ghcr.io/acme/orphan:latest" {
+		t.Fatalf("orphan container was not included as a task: %#v", orphan)
+	}
+}
+
 func TestRunLogsReadsRelativePathAndTailsAfterTarget(t *testing.T) {
 	start := mustTime(t, "2026-09-05T12:00:00Z")
 	finish := mustTime(t, "2026-09-05T12:01:00Z")

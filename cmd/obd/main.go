@@ -102,6 +102,14 @@ func run(args []string, out, errOut io.Writer) int {
 		err = cfg.status(commandArgs)
 	case "system":
 		err = cfg.system(commandArgs)
+	case "images":
+		err = cfg.images(commandArgs)
+	case "image":
+		err = cfg.image(commandArgs)
+	case "tasks":
+		err = cfg.tasks(commandArgs)
+	case "task":
+		err = cfg.task(commandArgs)
 	case "fn", "function":
 		err = cfg.fn(commandArgs)
 	case "list", "ls":
@@ -109,7 +117,7 @@ func run(args []string, out, errOut io.Writer) int {
 	case "run", "runs":
 		err = cfg.runCmd(commandArgs)
 	case "log", "logs":
-		err = cfg.runLogs(commandArgs)
+		err = cfg.taskLogs(commandArgs)
 	case "instance", "instances":
 		err = cfg.listRuns(commandArgs)
 	case "container", "containers":
@@ -130,20 +138,14 @@ func printUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   obd [global flags] version
   obd [global flags] status
-  obd [global flags] list [FUNCTION]
-  obd [global flags] list functions
-  obd [global flags] run list [FUNCTION]
-  obd [global flags] run info RUN_ID|WINDOW_ID|RESULT_ID
-  obd [global flags] run logs RUN_ID|WINDOW_ID|RESULT_ID
-  obd [global flags] fn list
-  obd [global flags] fn info NAME
-  obd [global flags] fn status [NAME]
-  obd [global flags] fn start NAME [flags]
-  obd [global flags] fn stop NAME|WINDOW_ID|RUN_ID
-  obd [global flags] container info ID
-  obd [global flags] container status [ID]
-  obd [global flags] container start NAME [flags]
-  obd [global flags] container stop ID
+  obd [global flags] images
+  obd [global flags] image inspect NAME
+  obd [global flags] task list [FUNCTION]
+  obd [global flags] task inspect TARGET
+  obd [global flags] task describe TARGET
+  obd [global flags] task logs TARGET [--tail N]
+  obd [global flags] task start NAME [flags]
+  obd [global flags] task stop TARGET
 
 Global flags:
   --addr string              orbitald HTTP endpoint (default http://127.0.0.1:8080)
@@ -155,14 +157,17 @@ Global flags:
 Examples:
   obd version
   obd status
-  obd fn list
-  obd fn status capture
-  obd list
-  obd list capture
-  obd run logs capture-20260905t120000-000001
-  obd fn start capture --payload '{"camera":"nadir"}'
-  obd fn start capture --image ghcr.io/acme/capture:latest
-  obd fn stop capture
+  obd images
+  obd image inspect capture
+  obd task list
+  obd task list capture
+  obd task logs capture-20260905t120000-000001
+  obd task start capture --payload '{"camera":"nadir"}'
+  obd task start capture --image ghcr.io/acme/capture:latest
+  obd task stop capture
+
+Legacy aliases:
+  fn, function, run, runs, list, ls, log, logs, container, containers
 `)
 }
 
@@ -173,6 +178,35 @@ func (c *cli) help(args []string) error {
 	}
 
 	switch args[0] {
+	case "images", "image":
+		fmt.Fprint(c.out, `Usage:
+  obd images
+  obd image inspect NAME
+
+Images are registered runnable function specs: name, OCI image, env, command, user, memory, and timeout.
+`)
+	case "task", "tasks":
+		fmt.Fprint(c.out, `Usage:
+  obd task list [FUNCTION]
+  obd task inspect TARGET
+  obd task describe TARGET
+  obd task logs TARGET [--tail N]
+  obd task start NAME [flags]
+  obd task stop TARGET
+
+Tasks include pending, running, stopped, failed, and expired orbitald executions. When containerd is reachable, task list also includes live containers in the orbitald namespace.
+
+Task start flags:
+  --image string       upsert this function image before starting
+  --area string        window area value (default manual)
+  --payload string     JSON payload or @path (default {})
+  --duration duration  manual run window duration (default 10m)
+  --memory string      memory limit when --image is provided
+  --run-timeout string function timeout when --image is provided
+  --user string        container user when --image is provided
+  --arg string         container command arg when --image is provided; repeatable
+  --env KEY=VALUE      environment variable when --image is provided; repeatable
+`)
 	case "list", "ls":
 		fmt.Fprint(c.out, `Usage:
   obd list [FUNCTION]
@@ -217,7 +251,7 @@ Runs are read from the orbitald snapshot. Completed successful runs are shown as
   obd container stop ID
 
 Notes:
-  container start is an alias for fn start and starts a function through orbitald.
+  container start is an alias for task start and starts a function through orbitald.
   container status/info/stop operate on live containerd containers in the orbitald namespace.
 `)
 	default:
@@ -352,6 +386,70 @@ func (c *cli) system(args []string) error {
 	}
 }
 
+func (c *cli) images(args []string) error {
+	if len(args) == 0 {
+		return c.imageList(nil)
+	}
+	if len(args) == 1 && args[0] == "help" {
+		return c.help([]string{"image"})
+	}
+	return fmt.Errorf("usage: obd images")
+}
+
+func (c *cli) image(args []string) error {
+	if len(args) == 0 {
+		return c.help([]string{"image"})
+	}
+
+	switch args[0] {
+	case "list", "ls":
+		return c.imageList(args[1:])
+	case "inspect", "describe", "info", "show":
+		return c.imageInspect(args[1:])
+	case "help":
+		return c.help([]string{"image"})
+	default:
+		return fmt.Errorf("unknown image command %q", args[0])
+	}
+}
+
+func (c *cli) tasks(args []string) error {
+	if len(args) == 0 {
+		return c.taskList(nil)
+	}
+	if len(args) == 1 && args[0] == "help" {
+		return c.help([]string{"task"})
+	}
+	switch args[0] {
+	case "list", "ls", "get", "status", "inspect", "describe", "info", "show", "log", "logs", "start", "stop":
+		return c.task(args)
+	}
+	return c.task(append([]string{"list"}, args...))
+}
+
+func (c *cli) task(args []string) error {
+	if len(args) == 0 {
+		return c.help([]string{"task"})
+	}
+
+	switch args[0] {
+	case "list", "ls", "get", "status":
+		return c.taskList(args[1:])
+	case "inspect", "describe", "info", "show":
+		return c.taskInspect(args[1:])
+	case "log", "logs":
+		return c.taskLogs(args[1:])
+	case "start":
+		return c.taskStart(args[1:])
+	case "stop":
+		return c.taskStop(args[1:])
+	case "help":
+		return c.help([]string{"task"})
+	default:
+		return fmt.Errorf("unknown task command %q", args[0])
+	}
+}
+
 func (c *cli) fn(args []string) error {
 	if len(args) == 0 {
 		return c.help([]string{"fn"})
@@ -381,7 +479,17 @@ func (c *cli) fnList(args []string) error {
 	if len(args) != 0 {
 		return fmt.Errorf("usage: obd fn list")
 	}
+	return c.printImages()
+}
 
+func (c *cli) imageList(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: obd images")
+	}
+	return c.printImages()
+}
+
+func (c *cli) printImages() error {
 	state, err := c.getState()
 	if err != nil {
 		return err
@@ -416,8 +524,17 @@ func (c *cli) fnInfo(args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: obd fn info NAME")
 	}
-	name := args[0]
+	return c.printFunctionInfo(args[0])
+}
 
+func (c *cli) imageInspect(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: obd image inspect NAME")
+	}
+	return c.printFunctionInfo(args[0])
+}
+
+func (c *cli) printFunctionInfo(name string) error {
 	state, err := c.getState()
 	if err != nil {
 		return err
@@ -525,8 +642,16 @@ func (c *cli) list(args []string) error {
 }
 
 func (c *cli) listRuns(args []string) error {
+	return c.listTaskInfos(args, "usage: obd list [FUNCTION]")
+}
+
+func (c *cli) taskList(args []string) error {
+	return c.listTaskInfos(args, "usage: obd task list [FUNCTION]")
+}
+
+func (c *cli) listTaskInfos(args []string, usage string) error {
 	if len(args) > 1 {
-		return fmt.Errorf("usage: obd list [FUNCTION]")
+		return fmt.Errorf("%s", usage)
 	}
 	var function string
 	if len(args) == 1 {
@@ -545,11 +670,20 @@ func (c *cli) listRuns(args []string) error {
 		}
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+	containers, containerdErr := c.listContainers(ctx)
+	if containerdErr == nil {
+		instances = mergeContainerInfos(instances, containers, function)
+	} else if !c.jsonOutput {
+		fmt.Fprintf(c.err, "WARN: live containers omitted: %v\n", containerdErr)
+	}
+
 	if c.jsonOutput {
 		return writePrettyJSON(c.out, instances)
 	}
 
-	fmt.Fprintf(c.out, "%-32s %-20s %-9s %-28s %-28s %-5s %-20s %s\n", "RUN", "FUNCTION", "STATUS", "WINDOW", "RESULT", "EXIT", "STARTED", "ERROR")
+	fmt.Fprintf(c.out, "%-32s %-20s %-9s %-5s %-56s %-32s %-20s %s\n", "TASK", "FUNCTION", "STATUS", "EXIT", "IMAGE", "CONTAINER", "STARTED", "ERROR")
 	for _, instance := range instances {
 		exitCode := "-"
 		if instance.ExitCode != nil {
@@ -557,13 +691,13 @@ func (c *cli) listRuns(args []string) error {
 		}
 		fmt.Fprintf(
 			c.out,
-			"%-32s %-20s %-9s %-28s %-28s %-5s %-20s %s\n",
+			"%-32s %-20s %-9s %-5s %-56s %-32s %-20s %s\n",
 			shorten(instance.ID, 32),
-			shorten(instance.Function, 20),
+			shorten(valueOrDash(instance.Function), 20),
 			instance.Status,
-			shorten(instance.WindowID, 28),
-			shorten(valueOrDash(instance.ResultID), 28),
 			exitCode,
+			shorten(valueOrDash(instance.Image), 56),
+			shorten(valueOrDash(instance.ContainerID), 32),
 			formatOptionalTime(instance.StartedAt),
 			shorten(valueOrDash(instance.Error), 72),
 		)
@@ -584,7 +718,7 @@ func (c *cli) runCmd(args []string) error {
 	case "log", "logs":
 		return c.runLogs(args[1:])
 	case "stop":
-		return c.fnStop(args[1:])
+		return c.taskStop(args[1:])
 	case "help":
 		return c.help([]string{"run"})
 	default:
@@ -592,28 +726,61 @@ func (c *cli) runCmd(args []string) error {
 	}
 }
 
+func (c *cli) taskInspect(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: obd task inspect TARGET")
+	}
+	if err := c.printTaskInfo(args[0]); err == nil {
+		return nil
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+		defer cancel()
+		info, containerErr := c.containerInfoValue(ctx, args[0])
+		if containerErr != nil {
+			return err
+		}
+		return c.printContainerTaskInfo(info)
+	}
+}
+
 func (c *cli) runInfo(args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: obd run info RUN_ID|WINDOW_ID|RESULT_ID")
 	}
+	return c.printRunInfo(args[0])
+}
 
+func (c *cli) printRunInfo(target string) error {
+	return c.printRunInfoWithNoun(target, "run", false)
+}
+
+func (c *cli) printTaskInfo(target string) error {
+	return c.printRunInfoWithNoun(target, "task", true)
+}
+
+func (c *cli) printRunInfoWithNoun(target, noun string, includeLiveContainer bool) error {
 	state, err := c.getState()
 	if err != nil {
 		return err
 	}
 
-	info, ok := findRunInfo(state, args[0])
+	info, ok := findRunInfo(state, target)
 	if !ok {
-		return fmt.Errorf("run/window/result %q not found", args[0])
+		return fmt.Errorf("task/run/window/result %q not found", target)
+	}
+	if includeLiveContainer {
+		info = c.attachLiveContainerInfo(info)
 	}
 
 	if c.jsonOutput {
 		return writePrettyJSON(c.out, info)
 	}
 
-	fmt.Fprintf(c.out, "run: %s\n", info.ID)
+	fmt.Fprintf(c.out, "%s: %s\n", noun, info.ID)
 	fmt.Fprintf(c.out, "  function: %s\n", info.Function)
 	fmt.Fprintf(c.out, "  status: %s\n", info.Status)
+	printOptional(c.out, "  image", info.Image)
+	printOptional(c.out, "  container", info.ContainerID)
 	printOptional(c.out, "  window", info.WindowID)
 	printOptional(c.out, "  result", info.ResultID)
 	printOptional(c.out, "  run id", info.RunID)
@@ -636,8 +803,57 @@ func (c *cli) runInfo(args []string) error {
 	return nil
 }
 
+func (c *cli) attachLiveContainerInfo(info runInfo) runInfo {
+	if info.RunID == "" || c.containerdSock == "" {
+		return info
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+	container, err := c.containerInfoValue(ctx, info.RunID)
+	if err != nil {
+		return info
+	}
+	info.ContainerID = container.ID
+	if info.Image == "" {
+		info.Image = container.Image
+	}
+	return info
+}
+
+func (c *cli) printContainerTaskInfo(info containerInfo) error {
+	task := runInfo{
+		ID:          info.ID,
+		Status:      normalizeContainerTaskStatus(info.TaskStatus),
+		Image:       info.Image,
+		ContainerID: info.ID,
+		RunID:       info.ID,
+		StartedAt:   timePtr(info.CreatedAt),
+	}
+	if c.jsonOutput {
+		return writePrettyJSON(c.out, task)
+	}
+
+	fmt.Fprintf(c.out, "task: %s\n", task.ID)
+	fmt.Fprintf(c.out, "  status: %s\n", task.Status)
+	fmt.Fprintf(c.out, "  image: %s\n", valueOrDash(task.Image))
+	fmt.Fprintf(c.out, "  container: %s\n", task.ContainerID)
+	fmt.Fprintf(c.out, "  runtime: %s\n", info.Runtime)
+	fmt.Fprintf(c.out, "  task status: %s\n", info.TaskStatus)
+	fmt.Fprintf(c.out, "  created: %s\n", info.CreatedAt.Format(time.RFC3339))
+	fmt.Fprintf(c.out, "  updated: %s\n", info.UpdatedAt.Format(time.RFC3339))
+	return nil
+}
+
+func (c *cli) taskLogs(args []string) error {
+	return c.printRunLogs(args, "usage: obd task logs TARGET [--tail N]")
+}
+
 func (c *cli) runLogs(args []string) error {
-	target, tail, err := parseRunLogsArgs(args)
+	return c.printRunLogs(args, "usage: obd run logs RUN_ID|WINDOW_ID|RESULT_ID [--tail N]")
+}
+
+func (c *cli) printRunLogs(args []string, usage string) error {
+	target, tail, err := parseRunLogsArgs(args, usage)
 	if err != nil {
 		return err
 	}
@@ -678,9 +894,17 @@ func (c *cli) runLogs(args []string) error {
 	return err
 }
 
+func (c *cli) taskStart(args []string) error {
+	return c.startTask(args, "obd task start NAME [flags]", "task start")
+}
+
 func (c *cli) fnStart(args []string) error {
+	return c.startTask(args, "obd fn start NAME [flags]", "fn start")
+}
+
+func (c *cli) startTask(args []string, usage, flagSetName string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: obd fn start NAME [flags]")
+		return fmt.Errorf("usage: %s", usage)
 	}
 	name := args[0]
 
@@ -689,7 +913,7 @@ func (c *cli) fnStart(args []string) error {
 	var image, area, payload, memory, runTimeout, user string
 	var duration time.Duration
 
-	flags := flag.NewFlagSet("fn start", flag.ContinueOnError)
+	flags := flag.NewFlagSet(flagSetName, flag.ContinueOnError)
 	flags.SetOutput(c.err)
 	flags.StringVar(&image, "image", "", "upsert this function image before starting")
 	flags.StringVar(&area, "area", "manual", "window area value")
@@ -775,14 +999,30 @@ func (c *cli) fnStart(args []string) error {
 	return nil
 }
 
+func (c *cli) taskStop(args []string) error {
+	return c.stopOrbitalTask(args, "obd task stop TARGET", true)
+}
+
 func (c *cli) fnStop(args []string) error {
+	return c.stopOrbitalTask(args, "obd fn stop NAME|WINDOW_ID|RUN_ID", false)
+}
+
+func (c *cli) stopOrbitalTask(args []string, usage string, fallbackContainer bool) error {
 	if len(args) != 1 {
-		return fmt.Errorf("usage: obd fn stop NAME|WINDOW_ID|RUN_ID")
+		return fmt.Errorf("usage: %s", usage)
 	}
 	target := args[0]
 
 	state, err := c.getState()
 	if err != nil {
+		if fallbackContainer {
+			ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+			defer cancel()
+			if stopErr := c.stopContainerTask(ctx, target); stopErr == nil {
+				fmt.Fprintf(c.out, "stopped %s\n", target)
+				return nil
+			}
+		}
 		return err
 	}
 
@@ -796,6 +1036,15 @@ func (c *cli) fnStop(args []string) error {
 		}
 	}
 	if len(matches) == 0 {
+		if fallbackContainer {
+			ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+			defer cancel()
+			if err := c.stopContainerTask(ctx, target); err != nil {
+				return fmt.Errorf("no running task/container matched %q: %w", target, err)
+			}
+			fmt.Fprintf(c.out, "stopped %s\n", target)
+			return nil
+		}
 		return fmt.Errorf("no running function/window/run matched %q", target)
 	}
 
@@ -825,7 +1074,7 @@ func (c *cli) container(args []string) error {
 	case "status":
 		return c.containerStatus(args[1:])
 	case "start":
-		return c.fnStart(args[1:])
+		return c.taskStart(args[1:])
 	case "stop":
 		return c.containerStop(args[1:])
 	case "help":
@@ -1061,6 +1310,8 @@ type runInfo struct {
 	ID                string     `json:"id"`
 	Function          string     `json:"function"`
 	Status            string     `json:"status"`
+	Image             string     `json:"image,omitempty"`
+	ContainerID       string     `json:"container_id,omitempty"`
 	WindowID          string     `json:"window_id,omitempty"`
 	WindowStatus      string     `json:"window_status,omitempty"`
 	RunID             string     `json:"run_id,omitempty"`
@@ -1081,6 +1332,11 @@ type runInfo struct {
 }
 
 func buildRunInfos(state orbitald.StateSnapshot, onlyFunction string) []runInfo {
+	imagesByFunction := map[string]string{}
+	for _, fn := range state.Functions {
+		imagesByFunction[fn.Name] = fn.Image
+	}
+
 	resultsByWindow := map[string]orbitald.ResultRecord{}
 	resultsByRun := map[string]orbitald.ResultRecord{}
 	usedResults := map[string]bool{}
@@ -1123,6 +1379,59 @@ func buildRunInfos(state orbitald.StateSnapshot, onlyFunction string) []runInfo 
 			continue
 		}
 		instances = append(instances, runFromResult(result))
+	}
+
+	for i := range instances {
+		instances[i].Image = imagesByFunction[instances[i].Function]
+	}
+
+	sort.Slice(instances, func(i, j int) bool {
+		left := effectiveRunTime(instances[i])
+		right := effectiveRunTime(instances[j])
+		if left.Equal(right) {
+			return instances[i].ID < instances[j].ID
+		}
+		return left.After(right)
+	})
+	return instances
+}
+
+func mergeContainerInfos(instances []runInfo, containers []containerInfo, onlyFunction string) []runInfo {
+	byRunID := map[string]int{}
+	byTaskID := map[string]int{}
+	for i := range instances {
+		if instances[i].RunID != "" {
+			byRunID[instances[i].RunID] = i
+		}
+		byTaskID[instances[i].ID] = i
+	}
+
+	for _, container := range containers {
+		if index, ok := byRunID[container.ID]; ok {
+			instances[index].ContainerID = container.ID
+			if instances[index].Image == "" {
+				instances[index].Image = container.Image
+			}
+			continue
+		}
+		if index, ok := byTaskID[container.ID]; ok {
+			instances[index].ContainerID = container.ID
+			if instances[index].Image == "" {
+				instances[index].Image = container.Image
+			}
+			continue
+		}
+		if onlyFunction != "" {
+			continue
+		}
+		instances = append(instances, runInfo{
+			ID:          container.ID,
+			Status:      normalizeContainerTaskStatus(container.TaskStatus),
+			Image:       container.Image,
+			ContainerID: container.ID,
+			RunID:       container.ID,
+			StartedAt:   timePtr(container.CreatedAt),
+		})
 	}
 
 	sort.Slice(instances, func(i, j int) bool {
@@ -1218,7 +1527,7 @@ func runFailedBeforeLog(info runInfo) bool {
 	return info.LogPath == "" && info.ResultID != "" && info.Error != ""
 }
 
-func parseRunLogsArgs(args []string) (string, int, error) {
+func parseRunLogsArgs(args []string, usage string) (string, int, error) {
 	target := ""
 	tail := -1
 
@@ -1228,7 +1537,7 @@ func parseRunLogsArgs(args []string) (string, int, error) {
 		case arg == "--tail":
 			i++
 			if i >= len(args) {
-				return "", 0, fmt.Errorf("usage: obd run logs RUN_ID|WINDOW_ID|RESULT_ID [--tail N]")
+				return "", 0, fmt.Errorf("%s", usage)
 			}
 			value, err := parseTailValue(args[i])
 			if err != nil {
@@ -1252,7 +1561,7 @@ func parseRunLogsArgs(args []string) (string, int, error) {
 	}
 
 	if target == "" {
-		return "", 0, fmt.Errorf("usage: obd run logs RUN_ID|WINDOW_ID|RESULT_ID [--tail N]")
+		return "", 0, fmt.Errorf("%s", usage)
 	}
 	return target, tail, nil
 }
@@ -1312,6 +1621,19 @@ func normalizeRunStatus(windowStatus, resultStatus string) string {
 		return windowStatus
 	}
 	return "unknown"
+}
+
+func normalizeContainerTaskStatus(status string) string {
+	switch status {
+	case "", "unknown":
+		return "unknown"
+	case "created", "creating", "running", "paused", "pausing":
+		return status
+	case "stopped":
+		return "stopped"
+	default:
+		return status
+	}
 }
 
 func buildFunctionSummaries(state orbitald.StateSnapshot, only string) []functionSummary {
