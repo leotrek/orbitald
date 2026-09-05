@@ -101,11 +101,12 @@ func TestTaskDescribeFetchesTaskEndpoint(t *testing.T) {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 		}
 		return orbitald.TaskInfo{
-			ID:       "run-ok",
-			Function: "capture",
-			Status:   "stopped",
-			ResultID: "result-ok",
-			Image:    "ghcr.io/acme/capture:latest",
+			ID:          "run-ok",
+			Function:    "capture",
+			Status:      "stopped",
+			ResultID:    "result-ok",
+			Image:       "ghcr.io/acme/capture:latest",
+			ContainerID: "run-ok",
 		}, http.StatusOK
 	})
 
@@ -114,12 +115,49 @@ func TestTaskDescribeFetchesTaskEndpoint(t *testing.T) {
 	if err := cfg.task([]string{"describe", "result-ok"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "task: run-ok") || !strings.Contains(out.String(), "image: ghcr.io/acme/capture:latest") {
+	got := out.String()
+	if !strings.Contains(got, "task id: run-ok") || !strings.Contains(got, "task name: capture") || !strings.Contains(got, "image: ghcr.io/acme/capture:latest") {
 		t.Fatalf("unexpected output:\n%s", out.String())
+	}
+	if strings.Contains(got, "function:") || strings.Contains(got, "container:") {
+		t.Fatalf("task inspect should not print function/container details:\n%s", got)
 	}
 }
 
-func TestTaskListFetchesFunctionFilter(t *testing.T) {
+func TestTaskListFetchesTasksEndpoint(t *testing.T) {
+	cfg := testCLI(t, func(r *http.Request) (any, int) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks" || r.URL.RawQuery != "" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		return orbitald.TaskListResponse{
+			Tasks: []orbitald.TaskInfo{{
+				ID:          "run-ok",
+				Function:    "capture",
+				Status:      "stopped",
+				Image:       "ghcr.io/acme/processor:latest",
+				ContainerID: "run-ok",
+			}},
+		}, http.StatusOK
+	})
+
+	var out bytes.Buffer
+	cfg.out = &out
+	if err := cfg.task([]string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "run-ok") || !strings.Contains(got, "ghcr.io/acme/processor:latest") {
+		t.Fatalf("unexpected output:\n%s", got)
+	}
+	if !strings.Contains(got, "TASK ID") || !strings.Contains(got, "TASK NAME") || !strings.Contains(got, "capture") {
+		t.Fatalf("task list should print task id and task name:\n%s", got)
+	}
+	if strings.Contains(got, "FUNCTION") || strings.Contains(got, "CONTAINER") {
+		t.Fatalf("task list should not print function/container labels:\n%s", got)
+	}
+}
+
+func TestTaskListFetchesTaskNameFilter(t *testing.T) {
 	cfg := testCLI(t, func(r *http.Request) (any, int) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks" || r.URL.Query().Get("function") != "capture" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
@@ -134,8 +172,8 @@ func TestTaskListFetchesFunctionFilter(t *testing.T) {
 	if err := cfg.task([]string{"list", "capture"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "run-ok") || !strings.Contains(out.String(), "capture") {
-		t.Fatalf("unexpected output:\n%s", out.String())
+	if got := out.String(); !strings.Contains(got, "run-ok") || !strings.Contains(got, "capture") {
+		t.Fatalf("unexpected output:\n%s", got)
 	}
 }
 
@@ -195,8 +233,11 @@ func TestTaskStartPostsStartRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "queued manual-capture-20260905t120000z for function capture") {
+	if !strings.Contains(out.String(), "queued task manual-capture-20260905t120000z") || !strings.Contains(out.String(), "task name: capture") {
 		t.Fatalf("unexpected output:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "for function") {
+		t.Fatalf("task start output should not print function wording:\n%s", out.String())
 	}
 }
 
@@ -256,8 +297,11 @@ func TestTaskStartPostsImageOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "queued manual-capture-20260905t120000z for function capture") {
+	if !strings.Contains(out.String(), "queued task manual-capture-20260905t120000z") || !strings.Contains(out.String(), "task name: capture") {
 		t.Fatalf("unexpected output:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "for function") {
+		t.Fatalf("task start output should not print function wording:\n%s", out.String())
 	}
 }
 

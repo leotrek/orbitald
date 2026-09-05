@@ -2,7 +2,7 @@
 
 All responses are JSON. Timestamps are UTC RFC3339 values.
 
-Operator endpoints expose persisted orbitald state and, when containerd is reachable, live containers in the `orbitald` namespace. Contact sync remains the Earth/node data-plane endpoint; task start and stop are operator write endpoints for manual runs and recovery.
+Operator endpoints expose persisted orbitald state and runtime status when available. Contact sync remains the Earth/node data-plane endpoint; task start and stop are operator write endpoints for manual runs and recovery.
 
 ## `GET /healthz`
 
@@ -172,11 +172,11 @@ Returns `404 Not Found` when the function is not registered.
 
 ## `GET /v1/tasks`
 
-Returns task-oriented execution state. A task can come from a stored window/result or from a live container that does not have matching persisted state.
+Returns task-oriented execution state. Stored windows and results are enriched with runtime state when available.
 
 Optional query parameters:
 
-- `function`: only include tasks for the named function. Live containers without matching persisted state are omitted when this filter is set.
+- `function`: only include tasks for the named task. This matches the registered runnable name shown as `TASK NAME` by `obd task list`.
 
 ### Response
 
@@ -188,7 +188,6 @@ Optional query parameters:
       "function": "capture",
       "status": "stopped",
       "image": "ghcr.io/acme/capture:2026-09-03",
-      "container_id": "capture-20260903t120000-000001",
       "window_id": "pass-2026-09-03T12:00:00Z",
       "window_status": "success",
       "run_id": "capture-20260903t120000-000001",
@@ -214,7 +213,9 @@ Statuses are normalized for operators:
 - `error`: the window or result failed
 - `expired`: the window closed before execution
 
-If containerd cannot be queried, the endpoint still returns persisted tasks and sets `runtime_error`.
+If runtime state cannot be queried, the endpoint still returns persisted tasks and sets `runtime_error`.
+
+The `function` response field is the task name in operator-facing output.
 
 ## `POST /v1/tasks`
 
@@ -273,9 +274,9 @@ Queues a manual task by creating a short-lived window that is immediately eligib
 
 ## `GET /v1/tasks/{target}`
 
-Returns one task. `target` may be a task ID, run ID, window ID, result ID, or a live container ID in the `orbitald` namespace.
+Returns one task. `target` may be a task ID, run ID, window ID, or result ID.
 
-Returns `404 Not Found` when no stored task or live container matches.
+Returns `404 Not Found` when no stored task matches.
 
 ## `GET /v1/tasks/{target}/logs`
 
@@ -299,7 +300,7 @@ Returns `400 Bad Request` when `tail` is invalid or the task failed before a log
 
 ## `POST /v1/tasks/{target}/stop`
 
-Stops a running task. `target` may be a function name, window ID, run ID, or direct live container ID.
+Stops a running task. `target` may be a task ID, window ID, or run ID.
 
 ### Response
 
@@ -311,7 +312,7 @@ Stops a running task. `target` may be a function name, window ID, run ID, or dir
 }
 ```
 
-Returns `404 Not Found` when no matching running task or live container can be stopped.
+Returns `404 Not Found` when no matching running task can be stopped.
 
 ## `GET /v1/state`
 

@@ -110,7 +110,7 @@ func printUsage(w io.Writer) {
   obd [global flags] status
   obd [global flags] images
   obd [global flags] image inspect NAME
-  obd [global flags] task list [FUNCTION]
+  obd [global flags] task list [TASK_NAME]
   obd [global flags] task inspect TARGET
   obd [global flags] task describe TARGET
   obd [global flags] task logs TARGET [--tail N]
@@ -132,7 +132,7 @@ Examples:
   obd task logs capture-20260905t120000-000001
   obd task start capture --payload '{"camera":"nadir"}'
   obd task start capture --image ghcr.io/acme/capture:latest
-  obd task stop capture
+  obd task stop capture-20260905t120000-000001
 `)
 }
 
@@ -152,24 +152,24 @@ Images are registered runnable function specs: name, OCI image, env, command, us
 `)
 	case "task":
 		fmt.Fprint(c.out, `Usage:
-  obd task list [FUNCTION]
+  obd task list [TASK_NAME]
   obd task inspect TARGET
   obd task describe TARGET
   obd task logs TARGET [--tail N]
   obd task start NAME [flags]
   obd task stop TARGET
 
-Tasks include pending, running, stopped, failed, and expired orbitald executions. When containerd is reachable, task list also includes live containers in the orbitald namespace.
+Tasks include pending, running, stopped, failed, and expired orbitald executions. Task name is the registered runnable name used to start the task.
 
 Task start flags:
-  --image string       upsert this function image before starting
+  --image string       image to register before starting
   --area string        window area value (default manual)
   --payload string     JSON payload or @path (default {})
   --duration duration  manual run window duration (default 10m)
   --memory string      memory limit when --image is provided
-  --run-timeout string function timeout when --image is provided
-  --user string        container user when --image is provided
-  --arg string         container command arg when --image is provided; repeatable
+  --run-timeout string run timeout when --image is provided
+  --user string        runtime user when --image is provided
+  --arg string         command arg when --image is provided; repeatable
   --env KEY=VALUE      environment variable when --image is provided; repeatable
 `)
 	default:
@@ -378,21 +378,21 @@ func (c *cli) printFunctionInfo(name string) error {
 }
 
 func (c *cli) taskList(args []string) error {
-	return c.listTaskInfos(args, "usage: obd task list [FUNCTION]")
+	return c.listTaskInfos(args, "usage: obd task list [TASK_NAME]")
 }
 
 func (c *cli) listTaskInfos(args []string, usage string) error {
 	if len(args) > 1 {
 		return fmt.Errorf("%s", usage)
 	}
-	var function string
+	var taskName string
 	if len(args) == 1 {
-		function = args[0]
+		taskName = args[0]
 	}
 
 	path := "/v1/tasks"
-	if function != "" {
-		path += "?function=" + queryEscape(function)
+	if taskName != "" {
+		path += "?function=" + queryEscape(taskName)
 	}
 	var response orbitald.TaskListResponse
 	if err := c.getJSON(path, &response); err != nil {
@@ -403,10 +403,10 @@ func (c *cli) listTaskInfos(args []string, usage string) error {
 		return writePrettyJSON(c.out, response)
 	}
 	if response.RuntimeError != "" {
-		fmt.Fprintf(c.err, "WARN: live containers omitted: %v\n", response.RuntimeError)
+		fmt.Fprintf(c.err, "WARN: runtime state omitted: %v\n", response.RuntimeError)
 	}
 
-	fmt.Fprintf(c.out, "%-32s %-20s %-9s %-5s %-56s %-32s %-20s %s\n", "TASK", "FUNCTION", "STATUS", "EXIT", "IMAGE", "CONTAINER", "STARTED", "ERROR")
+	fmt.Fprintf(c.out, "%-32s %-20s %-9s %-5s %-56s %-20s %s\n", "TASK ID", "TASK NAME", "STATUS", "EXIT", "IMAGE", "STARTED", "ERROR")
 	for _, instance := range response.Tasks {
 		exitCode := "-"
 		if instance.ExitCode != nil {
@@ -414,13 +414,12 @@ func (c *cli) listTaskInfos(args []string, usage string) error {
 		}
 		fmt.Fprintf(
 			c.out,
-			"%-32s %-20s %-9s %-5s %-56s %-32s %-20s %s\n",
+			"%-32s %-20s %-9s %-5s %-56s %-20s %s\n",
 			shorten(instance.ID, 32),
 			shorten(valueOrDash(instance.Function), 20),
 			instance.Status,
 			exitCode,
 			shorten(valueOrDash(instance.Image), 56),
-			shorten(valueOrDash(instance.ContainerID), 32),
 			formatOptionalTime(instance.StartedAt),
 			shorten(valueOrDash(instance.Error), 72),
 		)
@@ -445,11 +444,10 @@ func (c *cli) printTaskInfo(target string) error {
 		return writePrettyJSON(c.out, info)
 	}
 
-	fmt.Fprintf(c.out, "task: %s\n", info.ID)
-	fmt.Fprintf(c.out, "  function: %s\n", info.Function)
+	fmt.Fprintf(c.out, "task id: %s\n", info.ID)
+	printOptional(c.out, "  task name", info.Function)
 	fmt.Fprintf(c.out, "  status: %s\n", info.Status)
 	printOptional(c.out, "  image", info.Image)
-	printOptional(c.out, "  container", info.ContainerID)
 	printOptional(c.out, "  window", info.WindowID)
 	printOptional(c.out, "  result", info.ResultID)
 	printOptional(c.out, "  run id", info.RunID)
@@ -514,14 +512,14 @@ func (c *cli) startTask(args []string, usage, flagSetName string) error {
 
 	flags := flag.NewFlagSet(flagSetName, flag.ContinueOnError)
 	flags.SetOutput(c.err)
-	flags.StringVar(&image, "image", "", "upsert this function image before starting")
+	flags.StringVar(&image, "image", "", "image to register before starting")
 	flags.StringVar(&area, "area", "manual", "window area value")
 	flags.StringVar(&payload, "payload", "{}", "JSON payload or @path")
 	flags.DurationVar(&duration, "duration", 10*time.Minute, "manual run window duration")
 	flags.StringVar(&memory, "memory", "", "memory limit when --image is provided")
-	flags.StringVar(&runTimeout, "run-timeout", "", "function timeout when --image is provided")
-	flags.StringVar(&user, "user", "", "container user when --image is provided")
-	flags.Var(&command, "arg", "container command arg when --image is provided; repeatable")
+	flags.StringVar(&runTimeout, "run-timeout", "", "run timeout when --image is provided")
+	flags.StringVar(&user, "user", "", "runtime user when --image is provided")
+	flags.Var(&command, "arg", "command arg when --image is provided; repeatable")
 	flags.Var(&envValues, "env", "environment variable KEY=VALUE when --image is provided; repeatable")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -572,7 +570,8 @@ func (c *cli) startTask(args []string, usage, flagSetName string) error {
 	if c.jsonOutput {
 		return writePrettyJSON(c.out, response)
 	}
-	fmt.Fprintf(c.out, "queued %s for function %s\n", response.Window.ID, response.Window.Function)
+	fmt.Fprintf(c.out, "queued task %s\n", response.Window.ID)
+	fmt.Fprintf(c.out, "task name: %s\n", response.Window.Function)
 	fmt.Fprintf(c.out, "window: %s to %s\n", response.Window.StartAt.Format(time.RFC3339), response.Window.EndAt.Format(time.RFC3339))
 	return nil
 }

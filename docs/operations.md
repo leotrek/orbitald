@@ -76,38 +76,179 @@ The checked-in systemd unit is a template. The install script rewrites `ExecStar
 
 ## CLI
 
-Basic system commands:
+Global flags go before the command. Use `--addr` for a non-default daemon URL and `--json` for machine-readable output.
+
+```bash
+obd --addr http://10.0.0.25:8080 status
+obd --json task list
+```
+
+### `obd version`
+
+Check the CLI version and, when reachable, the daemon version.
 
 ```bash
 obd version
-obd status
-obd help
 ```
 
-Image commands:
+### `obd status`
+
+Check daemon health, stored state counts, and runtime availability.
+
+```bash
+obd status
+```
+
+### `obd help`
+
+Print command summaries. Pass a command group for focused help.
+
+```bash
+obd help
+obd help task
+obd help image
+```
+
+### `obd images`
+
+List registered runnable images.
 
 ```bash
 obd images
+```
+
+### `obd image inspect NAME`
+
+Inspect one registered runnable image and its related windows/results.
+
+```bash
 obd image inspect capture
 ```
 
-Task commands:
+### `obd task list [TASK_NAME]`
+
+List task records by task ID and task name. Pass a task name to filter the list.
 
 ```bash
 obd task list
 obd task list capture
-obd task inspect <task-id>
-obd task describe <task-id>
-obd task logs <task-id>
-obd task logs <task-id> --tail 100
-obd task start capture --payload '{"camera":"nadir"}'
-obd task start capture --image ghcr.io/acme/capture:latest
-obd task stop capture
 ```
 
-`task list` includes pending, running, stopped, failed, and expired orbitald executions. When the local containerd socket is reachable, it also includes live containers in the `orbitald` namespace.
+Use the `TASK ID` from this output with `inspect`, `logs`, and `stop`.
 
-Use `--addr` when `orbitald` is listening somewhere other than `http://127.0.0.1:8080`. Configure a non-default containerd socket on the daemon with `orbitald -containerd-sock`.
+### `obd task inspect TARGET`
+
+Inspect one task. Use a `TASK ID` from `obd task list`.
+
+```bash
+obd task inspect capture-20260905t120000-000001
+```
+
+### `obd task describe TARGET`
+
+Alias for `obd task inspect TARGET`.
+
+```bash
+obd task describe capture-20260905t120000-000001
+```
+
+### `obd task logs TARGET [--tail N]`
+
+Print stored task logs. Use `--tail` to read only the last N lines.
+
+```bash
+obd task logs capture-20260905t120000-000001
+obd task logs capture-20260905t120000-000001 --tail 100
+```
+
+### `obd task start NAME [flags]`
+
+Queue a manual task. `NAME` is the task name shown by `obd task list`.
+
+Start a task that is already registered:
+
+```bash
+obd task start capture --payload '{"camera":"nadir","mode":"survey"}'
+```
+
+Start a task for a specific area and keep the manual window open for two minutes:
+
+```bash
+obd task start capture \
+  --area zone-a \
+  --duration 2m \
+  --payload '{"camera":"nadir"}'
+```
+
+Register or update the runnable image before starting:
+
+```bash
+obd task start capture \
+  --image ghcr.io/acme/capture:latest \
+  --payload '{"camera":"nadir"}' \
+  --duration 2m \
+  --run-timeout 90s \
+  --memory 128Mi
+```
+
+Run as a specific user when registering or updating the image:
+
+```bash
+obd task start capture \
+  --image ghcr.io/acme/capture:latest \
+  --user 1000 \
+  --payload '{"camera":"nadir"}'
+```
+
+Read payload JSON from a file:
+
+```bash
+obd task start capture --payload @payload.json
+```
+
+Example `payload.json`:
+
+```json
+{
+  "camera": "nadir",
+  "mode": "survey"
+}
+```
+
+Override command args and environment when registering or updating the image:
+
+```bash
+obd task start capture \
+  --image ghcr.io/acme/capture:latest \
+  --arg /app/capture \
+  --arg survey \
+  --env MODE=survey \
+  --env CAMERA=nadir
+```
+
+Return the queued task as JSON:
+
+```bash
+obd --json task start capture \
+  --image ghcr.io/acme/capture:latest \
+  --payload '{"camera":"nadir"}'
+```
+
+### `obd task stop TARGET`
+
+Stop a running task. Use a `TASK ID` from `obd task list`.
+
+```bash
+obd task stop capture-20260905t120000-000001
+```
+
+Stop workflow:
+
+```bash
+obd task list
+obd task stop capture-20260905t120000-000001
+obd task inspect capture-20260905t120000-000001
+```
 
 ## Uninstall
 

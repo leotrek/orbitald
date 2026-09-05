@@ -102,11 +102,11 @@ Returns the stored functions, windows, and result metadata.
 - `GET /v1/status` returns daemon, state, and container runtime status.
 - `GET /v1/images` lists registered function images.
 - `GET /v1/images/{name}` shows one function plus its windows and results.
-- `GET /v1/tasks` lists persisted executions and live runtime containers.
+- `GET /v1/tasks` lists task records with runtime state when available.
 - `POST /v1/tasks` queues a manual task window.
-- `GET /v1/tasks/{target}` inspects a task, run, window, result, or live container.
+- `GET /v1/tasks/{target}` inspects a task, run, window, or result.
 - `GET /v1/tasks/{target}/logs` reads stored task logs, with optional `tail`.
-- `POST /v1/tasks/{target}/stop` stops a running task or live container.
+- `POST /v1/tasks/{target}/stop` stops a running task.
 
 ### `GET /healthz`
 
@@ -159,10 +159,12 @@ obd task list capture
 obd task inspect <task-id>
 obd task logs <task-id>
 obd task start capture --payload '{"camera":"nadir"}'
-obd task stop capture
+obd task stop <task-id>
 ```
 
-`images` shows registered runnable function specs. `task list` shows persisted orbitald executions and, when containerd is reachable, live containers in the `orbitald` namespace.
+`images` shows registered runnable function specs. `task list` shows persisted orbitald executions by task ID and task name, with runtime state when available.
+
+See [Operations](docs/operations.md#cli) for examples for each command, including full `task start` and `task stop` workflows.
 
 For a node deployment, the systemd install runs `orbitald` as `root` so the
 container runtime can perform the required mount and snapshotter operations.
